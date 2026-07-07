@@ -29,7 +29,8 @@ def check(label: str, ok: bool, detail: str = "") -> None:
 def main() -> None:
     rec = sys.argv[1] if len(sys.argv) > 1 else str(Path.home() / "Downloads" / "1783081704.mp3")
     check("sample exists", Path(rec).is_file(), rec)
-    check("CC_HARNESS_AGENT_COMMAND set (fixture judge)", bool(os.environ.get("CC_HARNESS_AGENT_COMMAND")))
+    _cmd = os.environ.get("CC_HARNESS_AGENT_COMMAND", "")
+    check(f"CC_HARNESS_AGENT_COMMAND set → {_cmd or '(unset)'}", bool(_cmd))
 
     run = WorkflowRunner().start("callcenter-qa", {"recording_path": rec, "execution_mode": "command"})
     ev = run.context.get("evaluation", {})
