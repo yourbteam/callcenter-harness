@@ -1,0 +1,13 @@
+{
+  "name": "pipeline",
+  "description": "S1-S3' pipeline: ingest -> air-gapped redaction -> transcription (PII-free) -> prosody.",
+  "version": "0.0.1",
+  "phases": [
+    {"id": "ingest-1", "name": "Ingest", "type": "audio_ingest", "depends_on": [], "subscribes_to": [],
+     "audio_ingest": {"min_seconds": 8.0}},
+    {"id": "redact-1", "name": "Redact", "type": "audio_redaction", "depends_on": ["ingest-1"], "subscribes_to": ["ingest-1"],
+     "audio_redaction": {"require_ner": true, "min_mean_word_probability": 0.30, "pad_seconds": 0.25}},
+    {"id": "transcribe-1", "name": "Transcribe", "type": "transcription", "depends_on": ["redact-1"], "subscribes_to": ["redact-1"]},
+    {"id": "prosody-1", "name": "Prosody", "type": "prosody", "depends_on": ["redact-1", "transcribe-1"], "subscribes_to": ["redact-1", "transcribe-1"]}
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "contract_key": "callcenter-newplan-esign",
+  "id_prefix": "CC",
+  "description": "Mandatory script elements for the new-tariff-plan / e-sign call path (CallScript.docx). PII-content elements (address/name recital) are excluded per requirements §3.5.",
+  "categories_detail": [
+    {"category": "opening_consent", "keywords": ["записва", "обслужване"], "minimum_count": 1, "summary": "record-consent disclosure"},
+    {"category": "identify_a1", "keywords": ["А1", "А 1", "от името"], "minimum_count": 1, "summary": "identify as A1"},
+    {"category": "offer1_discount", "keywords": ["отстъпк"], "minimum_count": 1, "summary": "discount on monthly fee"},
+    {"category": "device_bonus", "keywords": ["слушалк", "Huawei", "гривн"], "minimum_count": 0, "summary": "device bonus (headphones/band)"},
+    {"category": "upsell_speed_channels", "keywords": ["Mbps", "канал", "скорост"], "minimum_count": 1, "summary": "speed/channels upsell"},
+    {"category": "select_packages", "keywords": ["Netflix", "HBO", "Diema", "MAX", "VOYO"], "minimum_count": 0, "summary": "select streaming packages"},
+    {"category": "price_framing", "keywords": ["евро", "месеца", "такса"], "minimum_count": 1, "summary": "price framing (12+12 months)"},
+    {"category": "cross_sell_check", "keywords": ["MBB", "Netbox", "карта"], "minimum_count": 0, "summary": "mandatory MBB/Netbox card check"},
+    {"category": "post_acceptance_questions", "keywords": ["рутер", "слушалките"], "minimum_count": 0, "summary": "post-acceptance offer questions"},
+    {"category": "legal_withdrawal", "keywords": ["14 дни", "откажете", "неустойка"], "minimum_count": 1, "summary": "14-day withdrawal right"},
+    {"category": "closing_recap", "keywords": ["обобщ", "приемате", "за Ваше спокойствие"], "minimum_count": 1, "summary": "mandatory closing recap"},
+    {"category": "thank_you", "keywords": ["благодар", "приятен ден", "приятна"], "minimum_count": 1, "summary": "thank-you close"}
+  ]
+}

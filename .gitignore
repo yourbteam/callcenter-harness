@@ -1,0 +1,17 @@
+# cc_harness run state
+.cc-harness-state/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Local models / outputs / any PII-bearing audio (never commit)
+.callcenter-harness/
+*.mp3
+*.wav
+
+# Raw client materials (A1 script/workflow) — excluded from the remote by default (confidentiality).
+# Un-ignore if you want them in the repo.
+ClientFiles/

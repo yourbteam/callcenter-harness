@@ -1,0 +1,14 @@
+{
+  "name": "noop",
+  "description": "M1 skeleton smoke workflow: a single no-op phase that completes.",
+  "version": "0.0.1",
+  "phases": [
+    {
+      "id": "noop-1",
+      "name": "No-op",
+      "type": "noop",
+      "depends_on": [],
+      "subscribes_to": []
+    }
+  ]
+}

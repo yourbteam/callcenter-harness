@@ -1,0 +1,15 @@
+{
+  "name": "ingest",
+  "description": "S1 ingest smoke: non-conversation gate + channel split.",
+  "version": "0.0.1",
+  "phases": [
+    {
+      "id": "ingest-1",
+      "name": "Ingest",
+      "type": "audio_ingest",
+      "depends_on": [],
+      "subscribes_to": [],
+      "audio_ingest": {"min_seconds": 8.0}
+    }
+  ]
+}
