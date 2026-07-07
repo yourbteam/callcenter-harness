@@ -22,7 +22,22 @@ EGN_WEIGHTS = [2, 4, 8, 5, 10, 9, 7, 3, 6]
 CONTEXT_LEAD_INS = [
     "на адрес", "адрес", "егн", "е.г.н", "г-н", "г-жа", "господин", "госпожо",
     "телефон", "мобилен", "номер", "клиентски номер", "договор", "абонатен",
+    "имейл", "имейла", "мейл", "е-мейл", "електронна поща",
 ]
+
+# Bulgarian number words (units, teens, tens, hundreds, thousand). A run of >= min_run consecutive
+# number-words is a spoken phone/EGN/account number that STT wrote as words (recall gap H1).
+BG_NUMBER_WORDS = frozenset({
+    "нула", "едно", "един", "една", "две", "два", "три", "четири", "пет", "шест", "седем", "осем", "девет",
+    "десет", "единайсет", "единадесет", "дванайсет", "дванадесет", "тринайсет", "тринадесет",
+    "четиринайсет", "четиринадесет", "петнайсет", "петнадесет", "шестнайсет", "шестнадесет",
+    "седемнайсет", "седемнадесет", "осемнайсет", "осемнадесет", "деветнайсет", "деветнадесет",
+    "двайсет", "двадесет", "тридесет", "четиридесет", "петдесет", "шейсет", "шестдесет",
+    "седемдесет", "осемдесет", "деветдесет",
+    "сто", "двеста", "триста", "четиристотин", "петстотин", "шестстотин", "седемстотин",
+    "осемстотин", "деветстотин", "хиляда", "хиляди",
+})
+_NUM_CONNECTOR = "и"
 
 
 @dataclass(frozen=True)
@@ -91,6 +106,35 @@ def find_pattern_spans(text: str) -> list[Span]:
     return spans
 
 
+def find_number_word_spans(text: str, min_run: int = 4) -> list[Span]:
+    """H1: mask a run of >= min_run consecutive Bulgarian number-WORDS (a spoken phone/EGN/account number
+    STT wrote as words). Connector 'и' is allowed between number-words but not counted. Recall-biased;
+    category PHONE_OR_ID (segment-level mask). min_run=4 avoids single spoken numbers ("две минути")."""
+    toks = [(m.group().lower(), m.start(), m.end()) for m in re.finditer(r"[A-Za-zА-Яа-я]+", text)]
+    spans: list[Span] = []
+    i, n = 0, len(toks)
+    while i < n:
+        if toks[i][0] not in BG_NUMBER_WORDS:
+            i += 1
+            continue
+        j, count, last_end = i, 0, toks[i][2]
+        while j < n and (toks[j][0] in BG_NUMBER_WORDS or toks[j][0] == _NUM_CONNECTOR):
+            if toks[j][0] in BG_NUMBER_WORDS:
+                count += 1
+                last_end = toks[j][2]  # end at the last NUMBER word (trims a trailing 'и')
+            j += 1
+        if count >= min_run:
+            spans.append(Span(toks[i][1], last_end, "PHONE_OR_ID"))
+        i = j
+    return spans
+
+
+def find_email_spans(text: str) -> list[Span]:
+    """H2: mask email addresses (written/spelled form). \\w is unicode → also matches Cyrillic locals."""
+    return [Span(m.start(), m.end(), "EMAIL")
+            for m in re.finditer(r"[\w.+\-]+@[\w\-]+\.[\w.\-]+", text)]
+
+
 def find_context_spans(text: str, follow_chars: int = 40) -> list[Span]:
     """Mask a window after each lead-in phrase (names/addresses spoken after known cues)."""
     spans: list[Span] = []
@@ -136,6 +180,8 @@ def detect_spans(
     masking bound) so the agent's script delivery stays assessable; patterns + NER still mask actual
     customer PII the agent recites (names/addresses via NER, numbers/EGN via patterns)."""
     spans = list(find_pattern_spans(text))
+    spans += find_number_word_spans(text)  # H1: spoken numbers written as words (both channels)
+    spans += find_email_spans(text)        # H2: email addresses (both channels)
     if include_context:
         spans += find_context_spans(text)
     if ner_hook is not None:
