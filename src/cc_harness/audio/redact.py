@@ -106,22 +106,29 @@ def find_pattern_spans(text: str) -> list[Span]:
     return spans
 
 
-def find_number_word_spans(text: str, min_run: int = 4) -> list[Span]:
-    """H1: mask a run of >= min_run consecutive Bulgarian number-WORDS (a spoken phone/EGN/account number
-    STT wrote as words). Connector 'и' is allowed between number-words but not counted. Recall-biased;
-    category PHONE_OR_ID (segment-level mask). min_run=4 avoids single spoken numbers ("две минути")."""
-    toks = [(m.group().lower(), m.start(), m.end()) for m in re.finditer(r"[A-Za-zА-Яа-я]+", text)]
+def _is_number_token(tok: str) -> bool:
+    """A number token = a Bulgarian number-word OR a digit group (e.g. '88')."""
+    return tok.isdigit() or tok.lower() in BG_NUMBER_WORDS
+
+
+def find_number_token_spans(text: str, min_run: int = 4) -> list[Span]:
+    """H1: mask a run of >= min_run consecutive number-TOKENS — each a Bulgarian number-WORD or a digit
+    group. Closes the seam where a spoken phone/EGN that STT wrote as a MIX of words+digits (e.g.
+    "0 осемдесет осем 9 седем") falls below both the digit-run (>=5 digits) and the word-run recognizers.
+    Connector 'и' is allowed but not counted. Recall-biased; category PHONE_OR_ID (segment-level mask).
+    min_run=4 avoids single spoken numbers ("две минути", "12 месеца")."""
+    toks = [(m.group(), m.start(), m.end()) for m in re.finditer(r"\d+|[A-Za-zА-Яа-я]+", text)]
     spans: list[Span] = []
     i, n = 0, len(toks)
     while i < n:
-        if toks[i][0] not in BG_NUMBER_WORDS:
+        if not _is_number_token(toks[i][0]):
             i += 1
             continue
         j, count, last_end = i, 0, toks[i][2]
-        while j < n and (toks[j][0] in BG_NUMBER_WORDS or toks[j][0] == _NUM_CONNECTOR):
-            if toks[j][0] in BG_NUMBER_WORDS:
+        while j < n and (_is_number_token(toks[j][0]) or toks[j][0].lower() == _NUM_CONNECTOR):
+            if _is_number_token(toks[j][0]):
                 count += 1
-                last_end = toks[j][2]  # end at the last NUMBER word (trims a trailing 'и')
+                last_end = toks[j][2]  # end at the last NUMBER token (trims a trailing 'и')
             j += 1
         if count >= min_run:
             spans.append(Span(toks[i][1], last_end, "PHONE_OR_ID"))
@@ -180,7 +187,7 @@ def detect_spans(
     masking bound) so the agent's script delivery stays assessable; patterns + NER still mask actual
     customer PII the agent recites (names/addresses via NER, numbers/EGN via patterns)."""
     spans = list(find_pattern_spans(text))
-    spans += find_number_word_spans(text)  # H1: spoken numbers written as words (both channels)
+    spans += find_number_token_spans(text)  # H1: spoken numbers as words/digits/mix (both channels)
     spans += find_email_spans(text)        # H2: email addresses (both channels)
     if include_context:
         spans += find_context_spans(text)
