@@ -34,4 +34,13 @@ ck("config min_pitch_std_hz=1 → std~0.5<1 monotone", "monotone_delivery" in r[
 r = ep([line(p) for p in (200, 260)], "left", min_pitch_std_hz=1.0)
 ck("config threshold: varied not monotone at 1Hz", "monotone_delivery" not in r["flags"])
 
+# masked-duration excluded from pace (Milestone-2 pace confound fix)
+from cc_harness.audio.prosody import _masked_overlap
+_r = [{"start": 6.0, "end": 7.0}, {"start": 8.0, "end": 9.0}]
+ck("pace: full masked overlap", abs(_masked_overlap(6.0, 7.0, _r) - 1.0) < 1e-9)
+ck("pace: partial/clipped overlap", abs(_masked_overlap(6.5, 8.0, _r) - 0.5) < 1e-9)
+ck("pace: no overlap → 0", _masked_overlap(0.0, 5.0, _r) == 0.0)
+ck("pace: multi-span sum", abs(_masked_overlap(5.0, 10.0, _r) - 2.0) < 1e-9)
+ck("pace: None ranges → 0", _masked_overlap(0.0, 10.0, None) == 0.0)
+
 print("\nALL TONE UNIT TESTS PASS")
