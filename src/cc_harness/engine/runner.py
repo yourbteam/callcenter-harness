@@ -145,8 +145,13 @@ class WorkflowRunner:
 
         redaction_map: list[dict[str, Any]] = []
         masked: dict[str, str] = {}
+        # The §7 agent-bound (skip broad context masking to keep the agent's script assessable) is only
+        # valid when a SEPARATE customer channel gets the full recall union. On a single/mono channel both
+        # speakers share it → force full-recall context masking there, else customer PII (names/addresses
+        # after lead-in cues that NER can miss) leaks on mono recordings.
+        single_channel = len(channel_data) < 2
         for chan, (path, words, text, char_to_word) in channel_data.items():
-            include_context = chan != agent_channel  # agent channel: bounded
+            include_context = single_channel or chan != agent_channel  # agent channel bounded only if a customer channel exists
             try:
                 spans = redact.detect_spans(text, ner_hook=ner_hook, include_context=include_context)
                 ranges = redact.spans_to_time_ranges(spans, words, char_to_word, pad=pad)
