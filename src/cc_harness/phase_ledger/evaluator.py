@@ -120,6 +120,115 @@ def _compose(contract: dict[str, Any], summary: dict[str, Any], items: list[dict
     return "\n".join(lines)
 
 
+# ---- Command-backed (model-judged) evaluation ------------------------------------------------------
+
+def _parse_present(value: Any, category: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+        return value.strip().lower() == "true"
+    raise ValueError(f"category '{category}' has invalid 'present': {value!r}")
+
+
+def _parse_conveyed(value: Any, category: str) -> float:
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"category '{category}' has invalid 'conveyed': {value!r}")
+    if not 0.0 <= f <= 1.0:
+        raise ValueError(f"category '{category}' 'conveyed' out of [0,1]: {f}")
+    return f
+
+
+def _parse_score(obj: Any, name: str) -> float:
+    if not isinstance(obj, dict):
+        raise ValueError(f"judge output missing '{name}' object")
+    try:
+        s = float(obj.get("score"))
+    except (TypeError, ValueError):
+        raise ValueError(f"'{name}.score' is not numeric: {obj.get('score')!r}")
+    if not 0.0 <= s <= 1.0:
+        raise ValueError(f"'{name}.score' out of [0,1]: {s}")
+    return s
+
+
+def evaluate_command(
+    contract: dict[str, Any], source_text: str, prosody_summary: str, executor: Any,
+    conveyed_threshold: float = 0.5,
+) -> EvalResult:
+    """Model-judged script adherence + emotion + active listening. The executor runs the configured
+    model command; its JSON is validated strictly (G8 — malformed output raises, the phase then HOLDs).
+    A mandatory element counts as met only if the model marks it present AND conveyed >= threshold."""
+    from cc_harness.phase_ledger.prompts import judge_prompt
+
+    payload = executor.run_role("judge", judge_prompt(contract, source_text, prosody_summary))
+    elements = payload.get("elements")
+    if not isinstance(elements, list):
+        raise ValueError("judge output missing 'elements' array")
+    by_cat: dict[str, dict[str, Any]] = {str(e.get("category")): e for e in elements if isinstance(e, dict)}
+
+    items: list[dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
+    quote_total = quote_exact = 0
+    for idx, detail in enumerate(contract["categories_detail"], start=1):
+        category = str(detail["category"])
+        mandatory = int(detail.get("minimum_count", 0)) > 0
+        # Strict validation (G8 / NFR-5): a dropped category or a garbled field is malformed output →
+        # RAISE (the phase HOLDs) rather than defaulting to a fabricated fail-score.
+        if category not in by_cat:
+            raise ValueError(f"judge omitted contract category '{category}'")
+        ent = by_cat[category]
+        present = _parse_present(ent.get("present"), category)
+        conveyed = _parse_conveyed(ent.get("conveyed"), category)
+        evidence = str(ent.get("evidence") or "").strip()
+        met = present and conveyed >= conveyed_threshold
+        if met:
+            # A "met" element MUST be backed by an exact source quote (auditability) — else it is an
+            # unbacked/hallucinated judgment → HOLD.
+            if not evidence or evidence not in source_text:
+                raise ValueError(f"category '{category}' scored met but evidence is not an exact source quote")
+        if evidence:
+            quote_total += 1
+            if evidence in source_text:
+                quote_exact += 1
+        items.append({"id": f"{contract['id_prefix']}-{idx:03d}", "category": category,
+                      "mandatory": mandatory, "matched": met, "conveyed": round(conveyed, 2),
+                      "source_quote": [evidence] if evidence else []})
+        if mandatory and not met:
+            findings.append({"id": f"missing-{category}", "category": category,
+                             "problem": f"Mandatory element '{category}' not conveyed (present={present}, conveyed={conveyed})."})
+
+    mand = [i for i in items if i["mandatory"]]
+    emotion_score = _parse_score(payload.get("emotion"), "emotion")
+    active_score = _parse_score(payload.get("active_listening"), "active_listening")
+    emotion = payload.get("emotion") or {}
+    active = payload.get("active_listening") or {}
+    summary = {
+        "mode": "command",
+        "item_count": len(items),
+        "mandatory_count": len(mand),
+        "matched_mandatory": sum(1 for i in mand if i["matched"]),
+        "finding_count": len(findings),
+        "adherence_score": round(sum(1 for i in mand if i["matched"]) / len(mand), 3) if mand else 0.0,
+        "emotion_score": emotion_score,
+        "active_listening_score": active_score,
+        # Every "met" element is quote-backed (enforced above), so coverage is authoritative here.
+        "exact_source_quote_coverage": (quote_exact == quote_total) if quote_total else True,
+        "category_status": {i["category"]: i["matched"] for i in items},
+    }
+    lines = [f"# Model-Judged Evaluation — {contract['contract_key']}", "",
+             f"- Adherence: {summary['adherence_score']} ({summary['matched_mandatory']}/{summary['mandatory_count']} mandatory conveyed)",
+             f"- Emotion: {summary['emotion_score']} — {emotion.get('assessment','')}",
+             f"- Active listening: {summary['active_listening_score']} — {active.get('assessment','')}",
+             f"- Exact source-quote coverage: {summary['exact_source_quote_coverage']}", ""]
+    for it in items:
+        lines.append(f"- {'✅' if it['matched'] else '❌'} `{it['id']}` {it['category']} (conveyed={it['conveyed']})")
+    ledger = {"contract_key": contract["contract_key"],
+              "status": "completed" if not findings else "findings",
+              "items": items, "findings": findings, "manager_summary": summary}
+    return EvalResult(ledger=ledger, output_text="\n".join(lines))
+
+
 # ---- Intonation / delivery (deterministic proxy over the prosody summary) --------------------------
 import re  # noqa: E402
 

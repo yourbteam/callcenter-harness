@@ -290,12 +290,36 @@ class WorkflowRunner:
         if not source_text:
             raise ValueError("phase_ledger found no agent transcript to score")
 
-        result = evaluator.evaluate(contract, source_text)
-        # Intonation/delivery proxy over the agent's prosody summary (resolves M5 review #9 — prosody
-        # is now consumed). Nuanced scoring is deferred to command-backed model roles.
         prosody_lines = (run.context.get("prosody") or {}).get("summary_lines") or []
+        inputs = run.context.get("inputs") or {}
+        execution_mode = str(cfg.get("execution_mode") or inputs.get("execution_mode") or "deterministic")
+
+        if execution_mode == "command":
+            # Model-judged: semantic adherence + emotion + active listening on the redacted transcript.
+            from cc_harness.phase_ledger.executor import CommandRoleExecutor
+
+            try:
+                executor = CommandRoleExecutor.from_env()  # fail-closed if CC_HARNESS_AGENT_COMMAND unset
+                result = evaluator.evaluate_command(contract, source_text, "\n".join(prosody_lines), executor)
+            except Exception as exc:  # noqa: BLE001 - unconfigured/failed judge must HOLD, not fake a score
+                run.status = "blocked"
+                run.context["evaluation"] = {"held": True, "reason": f"command-mode judge: {exc}"}
+                phase_state.output = f"held_for_review: command-mode judge: {exc}"
+                return
+            run.context["evaluation"] = {
+                "mode": "command",
+                "contract_key": result.ledger["contract_key"],
+                "manager_summary": result.ledger["manager_summary"],
+                "findings": result.ledger["findings"],
+            }
+            phase_state.output = result.output_text
+            return
+
+        # Deterministic (default): keyword adherence + prosody-proxy intonation.
+        result = evaluator.evaluate(contract, source_text)
         intonation = evaluator.evaluate_prosody(prosody_lines, speaker=str(agent_channel))
         run.context["evaluation"] = {
+            "mode": "deterministic",
             "contract_key": result.ledger["contract_key"],
             "manager_summary": result.ledger["manager_summary"],
             "findings": result.ledger["findings"],
