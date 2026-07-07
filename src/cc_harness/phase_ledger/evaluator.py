@@ -341,24 +341,34 @@ import re  # noqa: E402
 
 def evaluate_prosody(
     summary_lines: list[str], speaker: str, min_energy_db: float = 55.0,
-    min_pace_wps: float = 1.5, max_pace_wps: float = 4.5,
+    min_pace_wps: float = 1.5, max_pace_wps: float = 4.5, min_pitch_std_hz: float = 15.0,
 ) -> dict[str, Any]:
     """Deterministic delivery flags from the prosody summary for one speaker (the agent). Flags
     sluggish/low-energy and off-band pace — a first proxy for the intonation dimension + the named
     'sluggish delivery' failure pattern (FirstWorkflow L17). Thresholds are configurable and need
     calibration on the labeled set; nuanced scoring is left to command-backed model roles."""
-    energies, paces = [], []
+    energies, paces, pitches = [], [], []
     for ln in summary_lines:
         if not ln.startswith(f"{speaker} "):
             continue
         e = re.search(r"energy=(-?\d+(?:\.\d+)?)dB", ln)
         p = re.search(r"pace=(-?\d+(?:\.\d+)?)wps", ln)
+        f0 = re.search(r"pitch=(\d+)Hz", ln)
         if e:
             energies.append(float(e.group(1)))
         if p:
             paces.append(float(p.group(1)))
+        if f0 and float(f0.group(1)) > 0:  # voiced turns only
+            pitches.append(float(f0.group(1)))
     mean_energy = sum(energies) / len(energies) if energies else 0.0
     mean_pace = sum(paces) / len(paces) if paces else 0.0
+    mean_pitch = sum(pitches) / len(pitches) if pitches else 0.0
+    # Intonation (T1): pitch VARIATION across voiced turns; a monotone agent has low spread.
+    if len(pitches) >= 2:
+        _m = mean_pitch
+        pitch_std: float | None = (sum((x - _m) ** 2 for x in pitches) / len(pitches)) ** 0.5
+    else:
+        pitch_std = None  # too few voiced turns to judge intonation
     flags = []
     if energies and mean_energy < min_energy_db:
         flags.append("low_energy_delivery")
@@ -366,10 +376,15 @@ def evaluate_prosody(
         flags.append("slow_pace")
     if paces and mean_pace > max_pace_wps:
         flags.append("fast_pace")
+    if pitch_std is not None and pitch_std < min_pitch_std_hz:
+        flags.append("monotone_delivery")
     return {
         "speaker": speaker,
         "turns": len(paces),
         "mean_energy_db": round(mean_energy, 1),
         "mean_pace_wps": round(mean_pace, 2),
+        "mean_pitch_hz": round(mean_pitch, 0),
+        "pitch_std_hz": round(pitch_std, 1) if pitch_std is not None else None,
+        "pitch_na": pitch_std is None,
         "flags": flags,
     }

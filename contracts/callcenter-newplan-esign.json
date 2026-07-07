@@ -26,5 +26,7 @@
   "ask_for_decision_phrases": ["да запишем", "да продължим", "съгласни ли сте", "потвърждавате", "да активираме", "искате ли"],
   "first_seconds": {"n": 10, "min_words": 12},
   "objection_cues": ["не е удобно", "на работа", "зает", "не искам", "нямам време", "не ме интересува"],
-  "_objection_note": "objection_cues seeded from the CallScript.docx objection branch; CLIENT TO CONFIRM. Used by the LLM judge (command mode)."
+  "_objection_note": "objection_cues seeded from the CallScript.docx objection branch; CLIENT TO CONFIRM. Used by the LLM judge (command mode).",
+  "prosody_thresholds": {"min_energy_db": 55.0, "min_pace_wps": 1.5, "max_pace_wps": 4.5, "min_pitch_std_hz": 15.0},
+  "_prosody_thresholds_note": "PLACEHOLDER tone thresholds — CLIENT TO CALIBRATE against labeled calls (FirstWorkflow интонация/вяло criteria). Absent block ⇒ evaluator defaults. monotone_delivery fires when agent pitch std < min_pitch_std_hz."
 }

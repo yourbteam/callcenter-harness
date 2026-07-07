@@ -20,8 +20,18 @@ def _segment_words(words: list[dict[str, Any]]) -> list[tuple[float, float, list
     return [(s, e, ws) for (s, e), ws in sorted(segs.items())]
 
 
-def channel_summary(wav_path: str, words: list[dict[str, Any]], speaker: str) -> list[str]:
-    """Return one text line per segment with prosody features."""
+def _in_masked(t: float, ranges: list[dict[str, Any]] | None) -> bool:
+    """True if time t (s) falls inside any redaction-masked span (silenced PII)."""
+    if not ranges:
+        return False
+    return any(float(r.get("start", 0.0)) <= t < float(r.get("end", 0.0)) for r in ranges)
+
+
+def channel_summary(wav_path: str, words: list[dict[str, Any]], speaker: str,
+                    masked_ranges: list[dict[str, Any]] | None = None) -> list[str]:
+    """Return one text line per segment with prosody features. Acoustic features (pitch, energy) are
+    computed over REAL speech only: sample times inside `masked_ranges` (redaction-silenced PII spans)
+    are skipped, so scrubbing does not depress the tone signal (Milestone-2 T2)."""
     import parselmouth  # offline (pure C++), no network
 
     snd = parselmouth.Sound(wav_path)
@@ -32,6 +42,9 @@ def channel_summary(wav_path: str, words: list[dict[str, Any]], speaker: str) ->
         vals = []
         t = s
         while t < e:
+            if _in_masked(t, masked_ranges):
+                t += 0.05
+                continue
             f = pitch.get_value_at_time(t)
             if f and f > 0:  # voiced only
                 vals.append(f)
@@ -42,6 +55,9 @@ def channel_summary(wav_path: str, words: list[dict[str, Any]], speaker: str) ->
         vals = []
         t = s
         while t < e:
+            if _in_masked(t, masked_ranges):
+                t += 0.05
+                continue
             try:
                 v = intensity.get_value(t)
             except Exception:  # noqa: BLE001 - out-of-range times return nothing

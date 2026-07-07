@@ -219,10 +219,12 @@ class WorkflowRunner:
         transcript_channels = (run.context.get("transcription") or {}).get("channels") or {}
         if not masked or not transcript_channels:
             raise ValueError("prosody requires masked_channels + transcription (run those first)")
+        redaction_map = (run.context.get("redaction") or {}).get("redaction_map") or []
         lines: list[str] = []
         for chan, path in masked.items():
             words = transcript_channels.get(chan, {}).get("words") or []
-            lines.extend(prosody.channel_summary(path, words, speaker=chan))
+            masked_ranges = [r for r in redaction_map if r.get("channel") == chan]  # T2: exclude silenced PII
+            lines.extend(prosody.channel_summary(path, words, speaker=chan, masked_ranges=masked_ranges))
         # Fail-closed: never hand S4 an empty prosody output (its composer raises on empty).
         if not lines:
             run.status = "blocked"
@@ -324,7 +326,10 @@ class WorkflowRunner:
 
         # Deterministic (default): keyword adherence + prosody-proxy intonation.
         result = evaluator.evaluate(contract, source_text, agent_words=agent_words, duration=duration)
-        intonation = evaluator.evaluate_prosody(prosody_lines, speaker=str(agent_channel))
+        _pt = contract.get("prosody_thresholds") or {}  # optional; else evaluator defaults (T3: client-calibrated)
+        intonation = evaluator.evaluate_prosody(
+            prosody_lines, speaker=str(agent_channel),
+            **{k: _pt[k] for k in ("min_energy_db", "min_pace_wps", "max_pace_wps", "min_pitch_std_hz") if k in _pt})
         run.context["evaluation"] = {
             "mode": "deterministic",
             "contract_key": result.ledger["contract_key"],
