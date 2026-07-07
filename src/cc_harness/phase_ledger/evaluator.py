@@ -46,7 +46,96 @@ def _find_quote(source_text: str, keywords: list[str], window: int = 40) -> str 
     return None
 
 
-def evaluate(contract: dict[str, Any], source_text: str) -> EvalResult:
+# ---- ClientFiles gap checks (G1 ordering, G2 forbidden/phrasing, G4 first-seconds, G5 persistence, G6
+# duration). Pure functions over the agent transcript + word timestamps; config-driven via OPTIONAL
+# contract blocks (absent block → that check reports `*_na=True`). Additive to the manager summary. ----
+
+def _first_offset(low: str, keywords: list[str]) -> int:
+    """Lowest char offset at which any keyword first appears in `low` (already lowercased), else -1."""
+    offs = [low.find(kw.lower()) for kw in keywords if kw]
+    offs = [o for o in offs if o >= 0]
+    return min(offs) if offs else -1
+
+
+def check_ordering(source_text: str, cat_keywords: dict[str, list[str]],
+                   ordering: list[dict[str, str]]) -> dict[str, Any]:
+    """G1: a {before, after} pair is a VIOLATION iff both categories appear and `after` precedes
+    `before` in the chronological agent transcript. `na` if no pair had both present."""
+    low = source_text.lower()
+    violations: list[dict[str, Any]] = []
+    evaluated = 0
+    for pair in ordering or []:
+        b, a = pair.get("before"), pair.get("after")
+        bo = _first_offset(low, cat_keywords.get(str(b), []))
+        ao = _first_offset(low, cat_keywords.get(str(a), []))
+        if bo < 0 or ao < 0:
+            continue  # one side absent → ordering not applicable to this pair
+        evaluated += 1
+        if ao < bo:
+            violations.append({"before": b, "after": a, "before_at": bo, "after_at": ao})
+    return {"ordering_violations": violations, "ordering_ok": (not violations) if evaluated else None,
+            "ordering_na": evaluated == 0}
+
+
+def check_forbidden(source_text: str, forbidden_words: list[str]) -> dict[str, Any]:
+    """G2a: forbidden words that appear in the agent transcript (case-insensitive substring)."""
+    low = source_text.lower()
+    hits = [w for w in (forbidden_words or []) if w and w.lower() in low]
+    return {"forbidden_hits": hits, "forbidden_na": not forbidden_words}
+
+
+def check_required_phrasings(source_text: str, phrasings: list[str]) -> dict[str, Any]:
+    """G2b: required exact phrasings missing from the transcript (case-insensitive substring)."""
+    low = source_text.lower()
+    missing = [p for p in (phrasings or []) if p and p.lower() not in low]
+    return {"required_phrasings_missing": missing, "required_phrasings_na": not phrasings}
+
+
+def first_seconds_engagement(agent_words: list[dict[str, Any]] | None, n: float,
+                             min_words: int) -> dict[str, Any]:
+    """G4: number of agent words spoken in the first `n` seconds; flag if below `min_words`. `na` if no
+    word timestamps are available."""
+    if not agent_words:
+        return {"first_seconds_words": None, "first_seconds_flag": None, "first_seconds_na": True}
+    count = sum(1 for w in agent_words
+                if (w.get("word") or "").strip() and float(w.get("start") or 0.0) < n)
+    return {"first_seconds_words": count, "first_seconds_flag": count < min_words, "first_seconds_na": False}
+
+
+def persistence(source_text: str, offer_keywords: list[str],
+                ask_phrases: list[str]) -> dict[str, Any]:
+    """G5: did the agent repeat the offer and ask for a decision? `offer_repeats` = offer-keyword hits
+    beyond the first; `ask_for_decision_count` = ask-phrase hits; flag if the agent never asked."""
+    low = source_text.lower()
+    offer_hits = sum(low.count(kw.lower()) for kw in (offer_keywords or []) if kw)
+    ask_count = sum(low.count(p.lower()) for p in (ask_phrases or []) if p)
+    na = not offer_keywords and not ask_phrases
+    return {"offer_repeats": max(0, offer_hits - 1) if offer_hits else 0,
+            "ask_for_decision_count": ask_count,
+            "persistence_flag": (ask_count == 0) if not na else None,
+            "persistence_na": na}
+
+
+def gap_checks(contract: dict[str, Any], source_text: str,
+               agent_words: list[dict[str, Any]] | None, duration: float | None) -> dict[str, Any]:
+    """Aggregate the deterministic ClientFiles gap checks into additive manager-summary fields. All
+    driven by OPTIONAL contract blocks; a missing block yields a `*_na` for that check."""
+    cat_kw = {str(d["category"]): [str(k) for k in d.get("keywords", [])]
+              for d in contract.get("categories_detail", [])}
+    fs = contract.get("first_seconds") or {}
+    out: dict[str, Any] = {"duration_seconds": round(float(duration), 1) if duration else None}
+    out.update(check_ordering(source_text, cat_kw, contract.get("ordering") or []))
+    out.update(check_forbidden(source_text, contract.get("forbidden_words") or []))
+    out.update(check_required_phrasings(source_text, contract.get("required_phrasings") or []))
+    out.update(first_seconds_engagement(agent_words, float(fs.get("n", 10)), int(fs.get("min_words", 12))))
+    out.update(persistence(source_text, cat_kw.get("offer1_discount", []),
+                           contract.get("ask_for_decision_phrases") or []))
+    return out
+
+
+def evaluate(contract: dict[str, Any], source_text: str, *,
+             agent_words: list[dict[str, Any]] | None = None,
+             duration: float | None = None) -> EvalResult:
     items: list[dict[str, Any]] = []
     findings: list[dict[str, Any]] = []
     for idx, detail in enumerate(contract["categories_detail"], start=1):
@@ -89,6 +178,7 @@ def evaluate(contract: dict[str, Any], source_text: str) -> EvalResult:
         "exact_source_quote_coverage": (exact == len(quotes)) if quotes else False,
         "category_status": {i["category"]: i["matched"] for i in items},
     }
+    summary.update(gap_checks(contract, source_text, agent_words, duration))  # G1/G2/G4/G5/G6 (additive)
     ledger = {
         "contract_key": contract["contract_key"],
         "status": "completed" if not findings else "findings",
@@ -152,16 +242,30 @@ def _parse_score(obj: Any, name: str) -> float:
     return s
 
 
+def _parse_objection(payload: dict[str, Any]) -> dict[str, Any]:
+    """G3: OPTIONAL objection object. Absent (e.g. the deterministic fixture judge) → `na`. Present but
+    not a well-formed dict with bool raised/rebutted → raise (HOLD, G8)."""
+    obj = payload.get("objection")
+    if obj is None:
+        return {"objection_raised": "na", "objection_rebutted": "na"}
+    if not isinstance(obj, dict):
+        raise ValueError(f"judge 'objection' must be an object, got {type(obj).__name__}")
+    return {"objection_raised": _parse_present(obj.get("raised"), "objection.raised"),
+            "objection_rebutted": _parse_present(obj.get("rebutted"), "objection.rebutted")}
+
+
 def evaluate_command(
-    contract: dict[str, Any], source_text: str, prosody_summary: str, executor: Any,
-    conveyed_threshold: float = 0.5,
+    contract: dict[str, Any], source_text: str, prosody_summary: str, executor: Any, *,
+    agent_words: list[dict[str, Any]] | None = None, duration: float | None = None,
+    customer_text: str | None = None, conveyed_threshold: float = 0.5,
 ) -> EvalResult:
-    """Model-judged script adherence + emotion + active listening. The executor runs the configured
-    model command; its JSON is validated strictly (G8 — malformed output raises, the phase then HOLDs).
-    A mandatory element counts as met only if the model marks it present AND conveyed >= threshold."""
+    """Model-judged script adherence + emotion + active listening (+ optional objection). The executor
+    runs the configured model command; its JSON is validated strictly (G8 — malformed output raises, the
+    phase then HOLDs). A mandatory element counts as met only if the model marks it present AND
+    conveyed >= threshold."""
     from cc_harness.phase_ledger.prompts import judge_prompt
 
-    payload = executor.run_role("judge", judge_prompt(contract, source_text, prosody_summary))
+    payload = executor.run_role("judge", judge_prompt(contract, source_text, prosody_summary, customer_text or ""))
     elements = payload.get("elements")
     if not isinstance(elements, list):
         raise ValueError("judge output missing 'elements' array")
@@ -223,6 +327,8 @@ def evaluate_command(
              f"- Exact source-quote coverage: {summary['exact_source_quote_coverage']}", ""]
     for it in items:
         lines.append(f"- {'✅' if it['matched'] else '❌'} `{it['id']}` {it['category']} (conveyed={it['conveyed']})")
+    summary.update(gap_checks(contract, source_text, agent_words, duration))  # G1/G2/G4/G5/G6 (additive)
+    summary.update(_parse_objection(payload))  # G3 (optional; na if judge omits it)
     ledger = {"contract_key": contract["contract_key"],
               "status": "completed" if not findings else "findings",
               "items": items, "findings": findings, "manager_summary": summary}

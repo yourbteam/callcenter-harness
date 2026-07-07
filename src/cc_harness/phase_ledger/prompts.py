@@ -19,17 +19,23 @@ OUTPUT_JSON_SHAPE = {
     ],
     "emotion": {"score": "0.0-1.0", "assessment": "<short, on the agent's warmth/confidence>"},
     "active_listening": {"score": "0.0-1.0", "assessment": "<short, did the agent respond to the customer>"},
+    "objection": {"raised": "true|false (did the CUSTOMER raise an objection/resistance)",
+                  "rebutted": "true|false (did the AGENT rebut it and keep selling, vs drop it)",
+                  "evidence": "<exact quote from the CUSTOMER CHANNEL, or empty>"},
     "notes": "<optional short overall note>",
 }
 
 
-def judge_prompt(contract: dict[str, Any], source_text: str, prosody_summary: str) -> str:
+def judge_prompt(contract: dict[str, Any], source_text: str, prosody_summary: str,
+                 customer_text: str = "") -> str:
     return "\n".join([
         "You are the QA judge for an outbound tele-sales call. Score the AGENT against the mandatory",
         "script elements in the phase contract, using only the SOURCE REQUEST (a redacted, PII-free",
-        "transcript plus a per-turn prosody summary). For each contract category decide if it was",
-        "semantically CONVEYED (not just whether a keyword appears), quote exact evidence from SOURCE,",
-        "and score emotion (warmth/confidence) and active listening. Return ONLY the JSON object.",
+        "transcript plus a per-turn prosody summary and the customer channel). For each contract category",
+        "decide if it was semantically CONVEYED (not just whether a keyword appears), quote exact evidence",
+        "from SOURCE, score emotion (warmth/confidence) and active listening, and judge whether the",
+        "CUSTOMER raised an objection and whether the AGENT rebutted it (kept selling) vs dropped it.",
+        "Return ONLY the JSON object.",
         "",
         "PHASE CONTRACT:",
         json.dumps({"contract_key": contract.get("contract_key"),
@@ -41,6 +47,9 @@ def judge_prompt(contract: dict[str, Any], source_text: str, prosody_summary: st
         "",
         "## PROSODY SUMMARY (per-turn pitch/pace/energy/pauses)",
         prosody_summary or "(none)",
+        "",
+        "## CUSTOMER CHANNEL (redacted, PII-free)",
+        customer_text or "(none)",
         "",
         "OUTPUT JSON SHAPE:",
         json.dumps(OUTPUT_JSON_SHAPE, ensure_ascii=False, indent=2),

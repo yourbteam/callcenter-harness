@@ -289,6 +289,11 @@ class WorkflowRunner:
         source_text = (channels.get(agent_channel, {}) or {}).get("text", "") if agent_channel else ""
         if not source_text:
             raise ValueError("phase_ledger found no agent transcript to score")
+        # ClientFiles gap checks need word timestamps + duration (agent) and the customer channel (G3).
+        agent_words = (channels.get(agent_channel, {}) or {}).get("words") or []
+        duration = (channels.get(agent_channel, {}) or {}).get("duration")
+        customer_channel = classify.get("customer_channel")
+        customer_text = (channels.get(customer_channel, {}) or {}).get("text", "") if customer_channel else ""
 
         prosody_lines = (run.context.get("prosody") or {}).get("summary_lines") or []
         inputs = run.context.get("inputs") or {}
@@ -300,7 +305,9 @@ class WorkflowRunner:
 
             try:
                 executor = CommandRoleExecutor.from_env()  # fail-closed if CC_HARNESS_AGENT_COMMAND unset
-                result = evaluator.evaluate_command(contract, source_text, "\n".join(prosody_lines), executor)
+                result = evaluator.evaluate_command(contract, source_text, "\n".join(prosody_lines), executor,
+                                                    agent_words=agent_words, duration=duration,
+                                                    customer_text=customer_text)
             except Exception as exc:  # noqa: BLE001 - unconfigured/failed judge must HOLD, not fake a score
                 run.status = "blocked"
                 run.context["evaluation"] = {"held": True, "reason": f"command-mode judge: {exc}"}
@@ -316,7 +323,7 @@ class WorkflowRunner:
             return
 
         # Deterministic (default): keyword adherence + prosody-proxy intonation.
-        result = evaluator.evaluate(contract, source_text)
+        result = evaluator.evaluate(contract, source_text, agent_words=agent_words, duration=duration)
         intonation = evaluator.evaluate_prosody(prosody_lines, speaker=str(agent_channel))
         run.context["evaluation"] = {
             "mode": "deterministic",

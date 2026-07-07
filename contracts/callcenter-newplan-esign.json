@@ -15,5 +15,16 @@
     {"category": "legal_withdrawal", "keywords": ["14 дни", "откажете", "неустойка"], "minimum_count": 1, "summary": "14-day withdrawal right"},
     {"category": "closing_recap", "keywords": ["обобщ", "приемате", "за Ваше спокойствие"], "minimum_count": 1, "summary": "mandatory closing recap"},
     {"category": "thank_you", "keywords": ["благодар", "приятен ден", "приятна"], "minimum_count": 1, "summary": "thank-you close"}
-  ]
+  ],
+  "ordering": [
+    {"before": "offer1_discount", "after": "select_packages"},
+    {"before": "offer1_discount", "after": "post_acceptance_questions"}
+  ],
+  "forbidden_words": [],
+  "required_phrasings": [],
+  "_forbidden_required_note": "CLIENT TO PROVIDE: the exact words that must NOT be used and the phrasings that must be said verbatim (FirstWorkflow.md:13). Empty ⇒ those checks report na.",
+  "ask_for_decision_phrases": ["да запишем", "да продължим", "съгласни ли сте", "потвърждавате", "да активираме", "искате ли"],
+  "first_seconds": {"n": 10, "min_words": 12},
+  "objection_cues": ["не е удобно", "на работа", "зает", "не искам", "нямам време", "не ме интересува"],
+  "_objection_note": "objection_cues seeded from the CallScript.docx objection branch; CLIENT TO CONFIRM. Used by the LLM judge (command mode)."
 }

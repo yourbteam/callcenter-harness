@@ -28,6 +28,8 @@ import urllib.request
 
 TRANSCRIPT_MARK = "## TRANSCRIPT (redacted, PII-free)\n"
 PROSODY_MARK = "\n\n## PROSODY SUMMARY"
+CUSTOMER_MARK = "## CUSTOMER CHANNEL (redacted, PII-free)\n"
+OUTPUT_MARK = "\n\nOUTPUT JSON SHAPE:"
 CONVEYED_THRESHOLD = 0.5
 
 
@@ -42,6 +44,14 @@ def _extract_source_text(prompt: str) -> str:
         return ""
     tail = prompt.split(TRANSCRIPT_MARK, 1)[1]
     return tail.split(PROSODY_MARK, 1)[0] if PROSODY_MARK in tail else tail
+
+
+def _extract_customer_text(prompt: str) -> str:
+    """Recover the customer-channel text (for objection-evidence validation), using prompts.py markers."""
+    if CUSTOMER_MARK not in prompt:
+        return ""
+    tail = prompt.split(CUSTOMER_MARK, 1)[1]
+    return tail.split(OUTPUT_MARK, 1)[0] if OUTPUT_MARK in tail else tail
 
 
 def _ollama_chat(host: str, model: str, prompt: str, num_ctx: int, timeout: int) -> str:
@@ -83,7 +93,7 @@ def _is_present(v: object) -> bool:
     return False
 
 
-def _repair_evidence(judgment: dict, source_text: str) -> dict:
+def _repair_evidence(judgment: dict, source_text: str, customer_text: str = "") -> dict:
     """Guarantee the evaluator's contract (evaluator.py:188): a MET element (present AND conveyed>=0.5)
     must carry an EXACT source substring as evidence. Repair the model's near-miss quote to an exact
     slice; if no exact span exists, DOWNGRADE (conveyed=0.0) so the element is not 'met' and needs no
@@ -112,6 +122,13 @@ def _repair_evidence(judgment: dict, source_text: str) -> dict:
         # no exact span → downgrade to not-met (honest: unaudited quote = not conveyed)
         el["conveyed"] = 0.0
         el["evidence"] = ""
+    # G3: objection.evidence must quote the CUSTOMER channel exactly, else blank it (never fabricate).
+    obj = judgment.get("objection")
+    if isinstance(obj, dict):
+        ev = str(obj.get("evidence") or "").strip()
+        if ev and ev not in customer_text:
+            idx = customer_text.lower().find(ev.lower())
+            obj["evidence"] = customer_text[idx: idx + len(ev)] if idx >= 0 else ""
     return judgment
 
 
@@ -130,7 +147,7 @@ def run_judge(model: str, host: str, num_ctx: int, timeout: int) -> None:
         die(f"model did not return valid JSON: {exc}")
     if not isinstance(judgment, dict):
         die("model JSON is not an object")
-    judgment = _repair_evidence(judgment, _extract_source_text(prompt))
+    judgment = _repair_evidence(judgment, _extract_source_text(prompt), _extract_customer_text(prompt))
     sys.stdout.write(json.dumps(judgment, ensure_ascii=False))
 
 
