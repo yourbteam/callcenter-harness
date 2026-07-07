@@ -27,6 +27,16 @@ def _in_masked(t: float, ranges: list[dict[str, Any]] | None) -> bool:
     return any(float(r.get("start", 0.0)) <= t < float(r.get("end", 0.0)) for r in ranges)
 
 
+def _masked_overlap(s: float, e: float, ranges: list[dict[str, Any]] | None) -> float:
+    """Total seconds of [s,e] that fall inside masked (silenced) spans."""
+    if not ranges:
+        return 0.0
+    total = 0.0
+    for r in ranges:
+        total += max(0.0, min(e, float(r.get("end", 0.0))) - max(s, float(r.get("start", 0.0))))
+    return total
+
+
 def channel_summary(wav_path: str, words: list[dict[str, Any]], speaker: str,
                     masked_ranges: list[dict[str, Any]] | None = None) -> list[str]:
     """Return one text line per segment with prosody features. Acoustic features (pitch, energy) are
@@ -71,7 +81,10 @@ def channel_summary(wav_path: str, words: list[dict[str, Any]], speaker: str,
     prev_end = 0.0
     for s, e, ws in _segment_words(words):
         dur = max(1e-3, e - s)
-        wps = len(ws) / dur
+        # Pace over REAL speech: subtract masked (silenced) duration from the denominator, else a turn
+        # with a masked name/number reads artificially slow (its words are gone but the silence counts).
+        speech_dur = max(1e-3, dur - _masked_overlap(s, e, masked_ranges))
+        wps = len(ws) / speech_dur
         pause_before = max(0.0, s - prev_end)
         f0 = mean_pitch(s, e)
         energy = mean_intensity(s, e)
