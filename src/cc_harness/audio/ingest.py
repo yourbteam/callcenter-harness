@@ -58,18 +58,28 @@ def classify_conversation(
 
 
 def split_channels(path: str, out_dir: str) -> dict[str, str]:
-    """Split stereo into left.wav/right.wav (free diarization). Mono → single mono.wav."""
+    """Split stereo into left.wav/right.wav (free diarization). Mono OR >2 channels → single mono.wav.
+
+    A 2-channel file is treated as stereo (per-channel diarization). Anything else (1 channel, or 3+
+    channels — a non-standard layout we can't diarize) is downmixed to mono and redacted full-recall.
+    Fail-closed (NFR-6): every ffmpeg split is checked (return code + output exists), else RAISE so the
+    ingest phase fails rather than handing downstream an empty/partial split."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     info = probe(path)
-    if info["channels"] < 2:
-        mono = out / "mono.wav"
-        _run(["ffmpeg", "-y", "-hide_banner", "-i", path, "-ac", "1", str(mono)])
-        return {"mono": str(mono)}
-    left, right = out / "left.wav", out / "right.wav"
-    _run([
-        "ffmpeg", "-y", "-hide_banner", "-i", path,
-        "-filter_complex", "channelsplit=channel_layout=stereo[l][r]",
-        "-map", "[l]", str(left), "-map", "[r]", str(right),
-    ])
-    return {"left": str(left), "right": str(right)}
+    if info["channels"] == 2:
+        left, right = out / "left.wav", out / "right.wav"
+        r = _run([
+            "ffmpeg", "-y", "-hide_banner", "-i", path,
+            "-filter_complex", "channelsplit=channel_layout=stereo[l][r]",
+            "-map", "[l]", str(left), "-map", "[r]", str(right),
+        ])
+        if r.returncode != 0 or not left.is_file() or not right.is_file():
+            raise RuntimeError(f"stereo channel split failed: {r.stderr.strip()[-200:]}")
+        return {"left": str(left), "right": str(right)}
+    # 1 channel, or 3+ channels we can't diarize → downmix to mono (safe, full-recall redaction).
+    mono = out / "mono.wav"
+    r = _run(["ffmpeg", "-y", "-hide_banner", "-i", path, "-ac", "1", str(mono)])
+    if r.returncode != 0 or not mono.is_file():
+        raise RuntimeError(f"mono downmix failed ({info['channels']} channels): {r.stderr.strip()[-200:]}")
+    return {"mono": str(mono)}
