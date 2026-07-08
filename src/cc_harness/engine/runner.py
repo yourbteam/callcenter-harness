@@ -8,6 +8,7 @@ Forked/minimized from `up_harness/engine/runner.py`. The dispatch is the same ha
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -20,8 +21,14 @@ TERMINAL_STATUSES = {"skipped", "blocked"}
 
 
 class WorkflowRunner:
-    def __init__(self, store: WorkflowStateStore | None = None):
+    def __init__(self, store: WorkflowStateStore | None = None, *,
+                 default_max_attempts: int = 1, retry_backoff_seconds: float = 0.0):
         self.store = store or WorkflowStateStore()
+        # Per-phase retry: a phase whose handler RAISES is re-dispatched up to `max_attempts` times
+        # (resolved per phase from config.max_attempts, else this default). Default 1 = no retry
+        # (behaviour-preserving). Heavy I/O phases (STT/ffmpeg/parselmouth) opt in via workflow config.
+        self.default_max_attempts = default_max_attempts
+        self.retry_backoff_seconds = retry_backoff_seconds
 
     def start(self, workflow_name: str, inputs: dict[str, Any] | None = None) -> WorkflowRun:
         workflow = load_workflow(workflow_name)
@@ -36,41 +43,63 @@ class WorkflowRunner:
         return run
 
     def _run_workflow(self, workflow: WorkflowDefinition, run: WorkflowRun) -> None:
-        for phase in workflow.phases:
+        # Honor the declared depends_on graph (topological, stable) rather than raw list order, so a
+        # workflow can't be silently mis-ordered by editing the JSON. Already-topological workflows are
+        # unchanged; a cycle/unknown-dep/duplicate-id raises here (fail-closed) before any phase runs.
+        for phase in workflow.execution_order():
             phase_state = PhaseState(phase_id=phase.id, status="running")
             run.phases[phase.id] = phase_state
             self.store.save(run)
-            try:
-                if phase.type == "noop":
-                    self._run_noop_phase(run, phase, phase_state)
-                elif phase.type == "audio_ingest":
-                    self._run_audio_ingest_phase(run, phase, phase_state)
-                elif phase.type == "audio_redaction":
-                    self._run_audio_redaction_phase(run, phase, phase_state)
-                elif phase.type == "transcription":
-                    self._run_transcription_phase(run, phase, phase_state)
-                elif phase.type == "prosody":
-                    self._run_prosody_phase(run, phase, phase_state)
-                elif phase.type == "call_path_classify":
-                    self._run_call_path_classify_phase(run, phase, phase_state)
-                elif phase.type == "phase_ledger":
-                    self._run_phase_ledger_phase(run, phase, phase_state)
-                else:
-                    raise ValueError(f"Unsupported phase type: {phase.type}")
-                # A phase may terminate the run early without failing (e.g. non-conversation).
-                if run.status in TERMINAL_STATUSES:
-                    phase_state.status = run.status
+            # Per-phase retry on a RAISED exception (a HOLD/skip sets run.status without raising and is
+            # never retried). Attempts are recorded on the ledger. Default max_attempts=1 → no retry.
+            max_attempts = max(1, int(phase.config.get("max_attempts", self.default_max_attempts)))
+            while True:
+                phase_state.attempts += 1
+                try:
+                    self._dispatch_phase(run, phase, phase_state)
+                    phase_state.error = None  # clear a prior transient error on a successful attempt
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    if phase_state.attempts < max_attempts:
+                        phase_state.error = str(exc)
+                        phase_state.status = "running"
+                        self.store.save(run)
+                        if self.retry_backoff_seconds:
+                            time.sleep(self.retry_backoff_seconds)
+                        continue
+                    phase_state.status = "failed"
+                    phase_state.error = str(exc)
+                    run.status = "failed"
                     self.store.save(run)
-                    return
-                phase_state.status = "completed"
-            except Exception as exc:  # noqa: BLE001
-                phase_state.status = "failed"
-                phase_state.error = str(exc)
-                run.status = "failed"
+                    raise
+            # A phase may terminate the run early without failing (e.g. non-conversation / review HOLD).
+            if run.status in TERMINAL_STATUSES:
+                phase_state.status = run.status
                 self.store.save(run)
-                raise
+                return
+            phase_state.status = "completed"
             self.store.save(run)
         run.status = "completed"
+
+    def _dispatch_phase(self, run: WorkflowRun, phase: WorkflowPhase, phase_state: PhaseState) -> None:
+        """Hardcoded phase-type dispatch (plan §0.2). Raising here triggers the retry loop in
+        _run_workflow; a review HOLD is signalled by setting run.status (no raise)."""
+        if phase.type == "noop":
+            self._run_noop_phase(run, phase, phase_state)
+        elif phase.type == "audio_ingest":
+            self._run_audio_ingest_phase(run, phase, phase_state)
+        elif phase.type == "audio_redaction":
+            self._run_audio_redaction_phase(run, phase, phase_state)
+        elif phase.type == "transcription":
+            self._run_transcription_phase(run, phase, phase_state)
+        elif phase.type == "prosody":
+            self._run_prosody_phase(run, phase, phase_state)
+        elif phase.type == "call_path_classify":
+            self._run_call_path_classify_phase(run, phase, phase_state)
+        elif phase.type == "phase_ledger":
+            self._run_phase_ledger_phase(run, phase, phase_state)
+        else:
+            raise ValueError(f"Unsupported phase type: {phase.type}")
 
     def _run_noop_phase(self, run: WorkflowRun, phase: WorkflowPhase, phase_state: PhaseState) -> None:
         phase_state.output = f"noop: {phase.id}"

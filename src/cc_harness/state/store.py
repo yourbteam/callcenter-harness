@@ -28,6 +28,7 @@ class PhaseState:
     status: str = "pending"
     output: str = ""
     error: str | None = None
+    attempts: int = 0  # number of dispatch attempts (>=1 once run); records per-phase retries
 
 
 @dataclass

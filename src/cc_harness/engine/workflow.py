@@ -32,6 +32,33 @@ class WorkflowDefinition:
     version: str
     phases: list[WorkflowPhase]
 
+    def execution_order(self) -> list[WorkflowPhase]:
+        """Phases in dependency order (stable: phases with satisfied deps run in original list order).
+        Makes the declared `depends_on` graph load-bearing so a workflow can't be silently mis-ordered
+        by editing the JSON list order. Fail-closed: a duplicate id, an unknown `depends_on`, or a
+        dependency cycle raises ValueError. Already-topological workflows are returned unchanged."""
+        by_id: dict[str, WorkflowPhase] = {}
+        for p in self.phases:
+            if p.id in by_id:
+                raise ValueError(f"duplicate phase id: {p.id!r}")
+            by_id[p.id] = p
+        for p in self.phases:
+            for dep in p.depends_on:
+                if dep not in by_id:
+                    raise ValueError(f"phase {p.id!r} depends_on unknown phase {dep!r}")
+        order: list[WorkflowPhase] = []
+        done: set[str] = set()
+        remaining = [p.id for p in self.phases]  # preserve original list order
+        while remaining:
+            ready = [pid for pid in remaining if all(d in done for d in by_id[pid].depends_on)]
+            if not ready:
+                raise ValueError(f"dependency cycle among phases: {remaining}")
+            for pid in ready:  # list-order stable among independents
+                order.append(by_id[pid])
+                done.add(pid)
+                remaining.remove(pid)
+        return order
+
 
 def _phase_from_dict(raw: dict[str, Any]) -> WorkflowPhase:
     known = {"id", "name", "type", "depends_on", "subscribes_to"}
