@@ -26,6 +26,56 @@ OUTPUT_JSON_SHAPE = {
 }
 
 
+RUBRIC_OUTPUT_JSON_SHAPE = {
+    "checks": {"<check id>": {"met": "true|false",
+                              "evidence": "<exact quote from SOURCE that proves it, or empty>",
+                              "detail": "<short reason>"}},
+    "deal": {"happened": "true|false (did the customer AGREE and the sale close)",
+             "consent": "true|false (explicit consent to proceed / take data)",
+             "refusal": "true|false (customer refused)"},
+    "path": {"is_titular": "true|false (the interlocutor is the account holder)",
+             "decision_maker": "true|false (answered YES to 'do you decide about this service')",
+             "service": "mobile|fixed|null"},
+    "emotion": {"score": "0.0-1.0 (agent warmth/confidence)"},
+    "active_listening": {"score": "0.0-1.0 (did the agent respond to the customer)"},
+    "objection": {"raised": "true|false", "rebutted": "true|false",
+                  "matched": "true|false (2nd objection matched the 1st → real, not brush-off)",
+                  "evidence": "<exact quote from the CUSTOMER CHANNEL, or empty>"},
+    "notes": "<optional short overall note>",
+}
+
+
+def judge_prompt_from_rubric(cmd_checks: list[dict[str, Any]], source_text: str, prosody_summary: str,
+                             customer_text: str = "") -> str:
+    """Slice 3: build the judge prompt from the profile's CMD rubric entries (each {id, question}) — NOT the
+    legacy categories_detail. The judge returns a verdict per check id + deal/path/emotion/listening/objection."""
+    checks = [{"id": str(c.get("id")), "question": str(c.get("question", "") or c.get("id"))}
+              for c in cmd_checks]
+    return "\n".join([
+        "You are the QA judge for an outbound tele-sales call. Using ONLY the SOURCE REQUEST (a redacted,",
+        "PII-free agent transcript + per-turn prosody + the customer channel), answer each CHECK, decide",
+        "whether a sale happened (deal), who is on the line (path), score emotion + active listening, and",
+        "judge the customer objection and whether the agent rebutted vs dropped it. Quote exact evidence",
+        "from SOURCE for every `met` check. Return ONLY the JSON object.",
+        "",
+        "PHASE CONTRACT:",
+        json.dumps({"checks": checks}, ensure_ascii=False),
+        "",
+        "SOURCE REQUEST:",
+        "## TRANSCRIPT (agent, redacted, PII-free)",
+        source_text,
+        "",
+        "## PROSODY SUMMARY (per-turn pitch/pace/energy/pauses)",
+        prosody_summary or "(none)",
+        "",
+        "## CUSTOMER CHANNEL (redacted, PII-free)",
+        customer_text or "(none)",
+        "",
+        "OUTPUT JSON SHAPE:",
+        json.dumps(RUBRIC_OUTPUT_JSON_SHAPE, ensure_ascii=False, indent=2),
+    ])
+
+
 def judge_prompt(contract: dict[str, Any], source_text: str, prosody_summary: str,
                  customer_text: str = "") -> str:
     return "\n".join([

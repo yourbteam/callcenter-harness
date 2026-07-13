@@ -378,46 +378,52 @@ class WorkflowRunner:
         inputs = run.context.get("inputs") or {}
         execution_mode = str(cfg.get("execution_mode") or inputs.get("execution_mode") or "deterministic")
 
-        if execution_mode == "command":
-            # Model-judged: semantic adherence + emotion + active listening on the redacted transcript.
-            from cc_harness.phase_ledger.executor import CommandRoleExecutor
-
-            try:
-                executor = CommandRoleExecutor.from_env()  # fail-closed if CC_HARNESS_AGENT_COMMAND unset
-                result = evaluator.evaluate_command(contract, source_text, "\n".join(prosody_lines), executor,
-                                                    agent_words=agent_words, duration=duration,
-                                                    customer_text=customer_text, offer_category_id=offer_category_id)
-            except Exception as exc:  # noqa: BLE001 - unconfigured/failed judge must HOLD, not fake a score
-                run.status = "blocked"
-                run.context["evaluation"] = {"held": True, "reason": f"command-mode judge: {exc}"}
-                phase_state.output = f"held_for_review: command-mode judge: {exc}"
-                return
-            run.context["evaluation"] = {
-                "mode": "command",
-                "contract_key": result.ledger["contract_key"],
-                "manager_summary": result.ledger["manager_summary"],
-                "findings": result.ledger["findings"],
-            }
-            phase_state.output = result.output_text
-            return
-
-        # Deterministic (default): the generic RUBRIC-INTERPRETER over the client's profile.rubric →
-        # per-criterion checklist + two-tier severity (Slice 2, the M3 reframe). Prosody/intonation (M2)
-        # is preserved. CMD/AI-judge checks (deal/gating/objection-match) are Slice 3 → indeterminate here.
+        # The generic RUBRIC-INTERPRETER over profile.rubric → per-criterion checklist + two-tier severity
+        # (the M3 reframe). DETERMINISTIC = agent-side DET/DET-MAP checks (Slice 2). COMMAND additionally
+        # calls the offline judge ONCE and feeds its verdict + the customer channel, so the CMD checks
+        # (deal/path/objection-match) resolve (Slice 3). Prosody/intonation (M2) preserved in both.
         from cc_harness.phase_ledger.rubric import run_rubric
 
         redaction_map = (run.context.get("redaction") or {}).get("redaction_map") or []
         mandated = list(contract.get("required_phrasings") or []) + list(contract.get("ask_for_decision_phrases") or [])
-        ctx = {"source_text": source_text, "agent_words": agent_words, "redaction_map": redaction_map,
-               "mandated_regions": mandated, "duration": duration, "channel": agent_channel}
-        rubric_out = run_rubric(profile.rubric, ctx)
+        ctx: dict[str, Any] = {"source_text": source_text, "agent_words": agent_words,
+                               "redaction_map": redaction_map, "mandated_regions": mandated,
+                               "duration": duration, "channel": agent_channel}
 
+        if execution_mode == "command":
+            from cc_harness.phase_ledger.executor import CommandRoleExecutor
+            # customer_text feeds the judge; customer_channel lets slot_present resolve the CUSTOMER role
+            # symbolically (G6 courier-capture). Customer word-timestamps aren't needed — the courier
+            # anchor phrase is spoken by the AGENT, and the captured slot comes from the redaction map.
+            ctx.update({"customer_text": customer_text, "customer_channel": customer_channel})
+            # Call the judge ONCE — only when a customer channel exists; on mono there is none, so the CMD
+            # checks stay indeterminate (→ review_needed), never a silent no_deal (M3 §14 R-b / plan D8).
+            if customer_channel:
+                cmd_checks = [c for c in profile.rubric
+                              if c.get("primitive") in ("judge_check", "deal_detect", "path_select") or c.get("question")]
+                try:
+                    executor = CommandRoleExecutor.from_env()  # fail-closed if CC_HARNESS_AGENT_COMMAND unset
+                    ctx["judge"] = evaluator.judge_call(cmd_checks, source_text, "\n".join(prosody_lines),
+                                                        executor, customer_text=customer_text)
+                except Exception as exc:  # noqa: BLE001 - unconfigured/failed judge must HOLD, not fake a score
+                    run.status = "blocked"
+                    run.context["evaluation"] = {"held": True, "reason": f"command-mode judge: {exc}"}
+                    phase_state.output = f"held_for_review: command-mode judge: {exc}"
+                    return
+
+        rubric_out = run_rubric(profile.rubric, ctx)
         _pt = contract.get("prosody_thresholds") or {}  # optional; else evaluator defaults (T3: client-calibrated)
         intonation = evaluator.evaluate_prosody(
             prosody_lines, speaker=str(agent_channel),
             **{k: _pt[k] for k in ("min_energy_db", "min_pace_wps", "max_pace_wps", "min_pitch_std_hz") if k in _pt})
+        self._emit_checklist(run, phase_state, contract, str(agent_channel), execution_mode, rubric_out, intonation)
+
+    def _emit_checklist(self, run: WorkflowRun, phase_state: PhaseState, contract: dict[str, Any],
+                        agent_channel: str, mode: str, rubric_out: dict[str, Any],
+                        intonation: dict[str, Any]) -> None:
+        """Write the per-criterion checklist evaluation (shared by deterministic + command modes)."""
         run.context["evaluation"] = {
-            "mode": "deterministic",
+            "mode": mode,
             "contract_key": contract["contract_key"],
             "checklist": rubric_out["checklist"],
             "violations": rubric_out["violations"],
@@ -428,7 +434,7 @@ class WorkflowRunner:
         cl = rubric_out["checklist"]
         met = sum(1 for r in cl if r["status"] == "met")
         phase_state.output = (
-            f"# Checklist — {contract['contract_key']} (agent {agent_channel})\n"
+            f"# Checklist — {contract['contract_key']} ({mode}, agent {agent_channel})\n"
             + f"{met}/{len(cl)} met | {len(rubric_out['violations'])} violations | "
             + f"{len(rubric_out['advisories'])} advisories | {len(rubric_out['review_needed'])} need review\n"
             + "".join(f"- [{r['status']}] {r['id']} ({r['tier']})\n" for r in cl)

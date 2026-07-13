@@ -23,34 +23,50 @@ def _between(text: str, start: str, end: str) -> str:
 
 contract_raw = _between(prompt, "PHASE CONTRACT:\n", "\n\nSOURCE REQUEST:").strip()
 source = _between(prompt, "SOURCE REQUEST:\n", "\n\nOUTPUT JSON SHAPE:").strip()
+# The rubric prompt's SOURCE REQUEST begins with "## TRANSCRIPT ...\n<agent text>"; grab the agent line
+agent_line = ""
+for seg in source.split("## "):
+    if seg.startswith("TRANSCRIPT"):
+        body = seg.split("\n", 1)[1] if "\n" in seg else ""
+        agent_line = body.split("\n\n", 1)[0].strip()
+        break
+agent_line = agent_line or source
 
 try:
     contract = json.loads(contract_raw) if contract_raw else {}
 except json.JSONDecodeError:
     contract = {}
+low = (agent_line or source).lower()
 
-low = source.lower()
-elements = []
-for detail in contract.get("categories_detail", []):
-    category = str(detail.get("category"))
-    evidence = ""
-    conveyed = 0.0
-    for kw in detail.get("keywords", []):
-        pos = low.find(str(kw).lower())
-        if pos != -1:
-            evidence = source[max(0, pos - 30): pos + len(str(kw)) + 30].strip()
-            conveyed = 0.9
-            break
-    elements.append({
-        "category": category,
-        "present": conveyed > 0,
-        "conveyed": conveyed,
-        "evidence": evidence,
-    })
-
-print(json.dumps({
-    "elements": elements,
-    "emotion": {"score": 0.7, "assessment": "fixture: adequate warmth/confidence"},
-    "active_listening": {"score": 0.6, "assessment": "fixture: some responsiveness"},
-    "notes": "deterministic fixture judgment (no model call)",
-}, ensure_ascii=False))
+if "checks" in contract:  # NEW rubric-driven judge shape (Slice 3)
+    quote = agent_line[:40]  # a real substring of SOURCE → passes the quote-exactness check
+    checks = {str(c.get("id")): {"met": True, "evidence": quote, "detail": "fixture met"}
+              for c in contract.get("checks", [])}
+    # deterministic deal/path heuristics from the agent transcript
+    deal = any(w in low for w in ("приемате", "обобщ", "адрес", "изпратя документ"))
+    print(json.dumps({
+        "checks": checks,
+        "deal": {"happened": deal, "consent": deal, "refusal": False},
+        "path": {"is_titular": True, "decision_maker": True, "service": "fixed"},
+        "emotion": {"score": 0.7}, "active_listening": {"score": 0.6},
+        "objection": {"raised": False, "rebutted": False, "matched": False, "evidence": ""},
+        "notes": "deterministic fixture judgment (no model call)",
+    }, ensure_ascii=False))
+else:  # legacy categories_detail shape (evaluate_command)
+    elements = []
+    for detail in contract.get("categories_detail", []):
+        evidence, conveyed = "", 0.0
+        for kw in detail.get("keywords", []):
+            pos = low.find(str(kw).lower())
+            if pos != -1:
+                evidence = (agent_line or source)[max(0, pos - 30): pos + len(str(kw)) + 30].strip()
+                conveyed = 0.9
+                break
+        elements.append({"category": str(detail.get("category")), "present": conveyed > 0,
+                         "conveyed": conveyed, "evidence": evidence})
+    print(json.dumps({
+        "elements": elements,
+        "emotion": {"score": 0.7, "assessment": "fixture: adequate warmth/confidence"},
+        "active_listening": {"score": 0.6, "assessment": "fixture: some responsiveness"},
+        "notes": "deterministic fixture judgment (no model call)",
+    }, ensure_ascii=False))

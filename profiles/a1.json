@@ -346,9 +346,137 @@
           "неустойка"
         ]
       }
+    },
+    {
+      "id": "courier_capture",
+      "primitive": "conditional_on",
+      "tier": "soft",
+      "condition": "deal",
+      "check": {
+        "primitive": "slot_present",
+        "channel": "customer",
+        "slot_categories": [
+          "CONTEXT_PII",
+          "GLINER_PII",
+          "PHONE_OR_ID",
+          "NUMERIC_RUN",
+          "MULTI",
+          "NER_LOC",
+          "NER_GPE",
+          "NER_FAC"
+        ],
+        "region": {
+          "after_phrase": [
+            "на кой адрес",
+            "адрес желаете",
+            "изпратя документите"
+          ],
+          "on_missing_anchor": "na"
+        }
+      }
+    },
+    {
+      "id": "deal",
+      "primitive": "deal_detect",
+      "tier": "soft"
+    },
+    {
+      "id": "path",
+      "primitive": "path_select",
+      "tier": "soft"
+    },
+    {
+      "id": "objection_effort",
+      "primitive": "judge_check",
+      "tier": "soft",
+      "question": "Did the agent make a real effort to rebut the customer's objection and keep selling, rather than give up / close with 'дочуване'?"
+    },
+    {
+      "id": "active_listening",
+      "primitive": "judge_check",
+      "tier": "soft",
+      "min_score": 0.5,
+      "question": "Did the agent actively listen and respond to what the customer said?"
+    },
+    {
+      "id": "emotion",
+      "primitive": "judge_check",
+      "tier": "soft",
+      "min_score": 0.5,
+      "question": "Was the agent warm, confident and energetic (not flat)?"
+    },
+    {
+      "id": "no_start_with_offer2",
+      "primitive": "phrase_ordering",
+      "tier": "hard",
+      "before_phrases": [
+        "отстъпк"
+      ],
+      "after_phrases": [
+        "преход към оф",
+        "друг тарифен план",
+        "трета оферта"
+      ]
     }
   ],
-  "call_paths": [],
-  "service_branches": {},
-  "legal_variants": []
+  "call_paths": [
+    {
+      "id": "titular"
+    },
+    {
+      "id": "non_titular_yes"
+    },
+    {
+      "id": "non_titular_no"
+    }
+  ],
+  "service_branches": {
+    "mobile": {
+      "required_params": [
+        "минути",
+        "роуминг",
+        "SMS",
+        "услуги селект",
+        "стандартна цена",
+        "промо цена"
+      ]
+    },
+    "fixed": {
+      "required_params": [
+        "канали",
+        "скорост",
+        "услуги селект",
+        "стандартна цена",
+        "промо цена",
+        "приемници"
+      ]
+    }
+  },
+  "legal_variants": [
+    {
+      "id": "V1",
+      "offer_type": "new_plan",
+      "device": false
+    },
+    {
+      "id": "V2",
+      "offer_type": "reset",
+      "device": false
+    },
+    {
+      "id": "V3",
+      "offer_type": "new_plan",
+      "device": true
+    },
+    {
+      "id": "V4",
+      "offer_type": "reset",
+      "device": true
+    },
+    {
+      "id": "V5",
+      "offer_type": "resign_new_service",
+      "device": null
+    }
+  ]
 }

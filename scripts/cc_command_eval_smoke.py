@@ -36,12 +36,21 @@ def main() -> None:
     ev = run.context.get("evaluation", {})
     check("command-mode run completed", run.status == "completed" and not ev.get("held"), f"status={run.status}")
     check("mode is command", ev.get("mode") == "command")
-    s = ev.get("manager_summary", {})
-    check("adherence + emotion + active_listening scored",
-          "adherence_score" in s and s.get("emotion_score") is not None and s.get("active_listening_score") is not None)
-    check("exact source-quote coverage true", s.get("exact_source_quote_coverage") is True)
-    print(f"       adherence={s.get('adherence_score')} emotion={s.get('emotion_score')} "
-          f"active_listening={s.get('active_listening_score')}")
+    # Slice 3: command mode emits the same CHECKLIST shape as deterministic, but the CMD rows (deal/path/
+    # judge_check) are now RESOLVED via the judge instead of indeterminate.
+    cl = ev.get("checklist") or []
+    check("checklist produced", isinstance(cl, list) and len(cl) > 0)
+    check("two-tier + review rollups present",
+          all(isinstance(ev.get(k), list) for k in ("violations", "advisories", "review_needed")))
+    check("intonation preserved", isinstance(ev.get("intonation"), dict) and "flags" in ev["intonation"])
+    ids = {r["id"]: r for r in cl}
+    cmd_ids = [i for i in ("deal", "path", "objection_effort", "active_listening", "emotion") if i in ids]
+    check("CMD checks present in the checklist", len(cmd_ids) >= 3, str(cmd_ids))
+    check("CMD checks RESOLVED by the judge (not all indeterminate)",
+          any(ids[i]["status"] in ("met", "not_met", "na") for i in cmd_ids), str({i: ids[i]["status"] for i in cmd_ids}))
+    met = sum(1 for r in cl if r["status"] == "met")
+    print(f"       checklist: {met}/{len(cl)} met | {len(ev.get('violations') or [])} viol "
+          f"| {len(ev.get('review_needed') or [])} review | CMD: {{{', '.join(f'{i}={ids[i]['status']}' for i in cmd_ids)}}}")
 
     # Fail-closed: same run without the command configured must HOLD.
     saved = os.environ.pop("CC_HARNESS_AGENT_COMMAND", None)

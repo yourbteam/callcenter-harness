@@ -260,6 +260,15 @@ def _parse_objection(payload: dict[str, Any]) -> dict[str, Any]:
             "objection_rebutted": _parse_present(obj.get("rebutted"), "objection.rebutted")}
 
 
+def judge_call(cmd_checks: list[dict[str, Any]], source_text: str, prosody_summary: str, executor: Any, *,
+               customer_text: str | None = None) -> dict[str, Any]:
+    """Slice 3: run the command-mode judge with a RUBRIC-derived prompt; return the raw structured verdict
+    ({checks, deal, path, emotion, active_listening, objection}). Scoring is done by the CMD primitives that
+    read this verdict — this function does no scoring. Raises (→ HOLD) if the judge command fails."""
+    from cc_harness.phase_ledger.prompts import judge_prompt_from_rubric
+    return executor.run_role("judge", judge_prompt_from_rubric(cmd_checks, source_text, prosody_summary, customer_text or ""))
+
+
 def evaluate_command(
     contract: dict[str, Any], source_text: str, prosody_summary: str, executor: Any, *,
     agent_words: list[dict[str, Any]] | None = None, duration: float | None = None,

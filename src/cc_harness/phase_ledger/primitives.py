@@ -145,17 +145,69 @@ def composite(cfg: dict[str, Any], ctx: Ctx) -> Result:
 
 # ---- DET-MAP primitive (needs the redaction map) --------------------------------------------------
 
+def _resolve_channel(chan: Any, ctx: Ctx) -> Any:
+    """Symbolic channel resolution (hollow): a profile must not hardcode a per-recording channel id
+    (left/right) — it names the ROLE and the runtime resolves it. `customer`/`agent` → the classified
+    channel from ctx; anything else is a literal (or None → the default agent channel via ctx)."""
+    if chan == "customer":
+        return ctx.get("customer_channel")
+    if chan == "agent":
+        return ctx.get("channel")
+    return chan or ctx.get("channel")
+
+
+def _phrase_start_time(words: list[dict[str, Any]], phrases: list[str]) -> float | None:
+    """Earliest start time (seconds) at which any of `phrases` begins in a word-timestamp list, or None
+    if none occur. Used to anchor a dynamic region to a spoken phrase (e.g. the address-request line)."""
+    if not words:
+        return None
+    joined, char_time = "", []  # char_time[i] = start time of the word char i belongs to (spaces incl.)
+    for w in words:
+        tok = str(w.get("word", ""))
+        start = float(w.get("start", 0.0))
+        if joined:
+            joined += " "
+            char_time.append(start)
+        joined += tok.lower()
+        char_time.extend([start] * len(tok))
+    best: float | None = None
+    for ph in phrases:
+        idx = joined.find(str(ph).lower())
+        if idx >= 0 and idx < len(char_time):
+            t = char_time[idx]
+            best = t if best is None else min(best, t)
+    return best
+
+
 def slot_present(cfg: dict[str, Any], ctx: Ctx) -> Result:
     """DET-MAP proxy: a masked PII slot of a configured category occurred in a time region on a channel
     (proves e.g. a name was SPOKEN, without the value). Slice-2 use: crit-1 name-slot in the intro region
-    on the agent channel. `indeterminate` if the redaction map is absent."""
+    on the agent channel. Slice-3 use: G6 courier-capture — a PHONE_OR_ID/address slot on the CUSTOMER
+    channel AFTER the address-request phrase (region.after_phrase). `indeterminate` if the redaction map
+    is absent, or a symbolic channel role is requested but that channel does not exist (mono)."""
     rmap = ctx.get("redaction_map")
     if rmap is None:
         return _r("indeterminate", reason="no redaction map")
     cats = set(cfg.get("slot_categories", []))
-    channel = cfg.get("channel") or ctx.get("channel")
+    chan_spec = cfg.get("channel")
+    channel = _resolve_channel(chan_spec, ctx)
+    if chan_spec in ("customer", "agent") and not channel:
+        return _r("indeterminate", reason=f"no {chan_spec} channel")
     region = cfg.get("region") or {}
     lo, hi = float(region.get("from", 0.0)), float(region.get("to", region.get("intro_seconds", 1e9)))
+    # Dynamic region anchoring: resolve `lo` to the anchor phrase's start in the anchor channel's words
+    # (default the agent's — the agent speaks the address-request line). A missing anchor means the
+    # precondition event never occurred, so a slot cannot be "after" it: on_missing_anchor decides whether
+    # that is not-applicable (e.g. e-sign path never says the courier line → na) or a miss (not_met).
+    after = region.get("after_phrase")
+    if after:
+        anchor_words = ctx.get(str(region.get("after_phrase_words", "agent_words"))) or []
+        t = _phrase_start_time(anchor_words, list(after))
+        if t is None:
+            disp = str(region.get("on_missing_anchor", "not_met"))
+            return _r(disp if disp in ("na", "not_met", "indeterminate") else "not_met",
+                      reason="anchor phrase absent", after_phrase=list(after))
+        lo = max(lo, t)
     for s in rmap:
         if channel and s.get("channel") != channel:
             continue
@@ -166,19 +218,88 @@ def slot_present(cfg: dict[str, Any], ctx: Ctx) -> Result:
     return _r("not_met", looked_for=sorted(cats))
 
 
+# ---- CMD / AI-judge primitives (Slice 3) ----------------------------------------------------------
+# These read `ctx["judge"]` (the command-mode judge verdict) + the customer channel. In DETERMINISTIC
+# mode ctx has no "judge" key → they return `indeterminate` (unchanged Slice-2 behavior). All use
+# ctx.get(...) — never subscript — so an absent key can't KeyError.
+
+def deal_detect(cfg: dict[str, Any], ctx: Ctx) -> Result:
+    """Resolve the call outcome from the judge verdict: deal / no_deal / refusal (+ consent). The rubric
+    interpreter runs this FIRST and copies the outcome onto ctx for `conditional_on` to read."""
+    judge = ctx.get("judge")
+    if not judge:
+        return _r("indeterminate", reason="no judge (command mode required)")
+    d = judge.get("deal") or {}
+    if d.get("happened"):
+        outcome = "deal"
+    elif d.get("refusal"):
+        outcome = "refusal"
+    else:
+        outcome = "no_deal"
+    status = "met" if outcome == "deal" else ("not_met" if outcome in ("no_deal", "refusal") else "indeterminate")
+    return _r(status, deal=outcome, consent=bool(d.get("consent")))
+
+
+def path_select(cfg: dict[str, Any], ctx: Ctx) -> Result:
+    """Resolve the call path from the judge verdict: titular vs non_titular (decision-maker gating) +
+    the mobile/fixed service branch. The interpreter copies `path` onto ctx for applies_to_paths filtering."""
+    judge = ctx.get("judge")
+    if not judge:
+        return _r("indeterminate", reason="no judge (command mode required)")
+    p = judge.get("path") or {}
+    # Fail-closed: the harness never assumes the happy path. A judge verdict that omits the gating
+    # field must NOT silently resolve to titular (which would skip every non-titular applies_to_paths
+    # row) — it stays indeterminate so the path-gated rows fall through to review_needed, matching the
+    # mono/no-judge disposition (M3 §14 R-b).
+    is_titular = p.get("is_titular")
+    if is_titular is None:
+        return _r("indeterminate", reason="judge omitted is_titular")
+    path = "titular" if is_titular else ("non_titular_yes" if p.get("decision_maker") else "non_titular_no")
+    return _r("met", path=path, service=p.get("service"))
+
+
+def judge_check(cfg: dict[str, Any], ctx: Ctx) -> Result:
+    """A semantic check delegated to the command-mode judge. Reads the judge's per-id verdict; a `met`
+    verdict must carry an evidence substring that actually appears in the source (NFR-5 quote-exactness,
+    moved here from evaluate_command). Optional `min_score` compares a scored judge field."""
+    judge = ctx.get("judge")
+    if not judge:
+        return _r("indeterminate", reason="no judge (command mode required)")
+    verdict = (judge.get("checks") or {}).get(str(cfg.get("id"))) or {}
+    if "min_score" in cfg:  # scored field (e.g. active_listening/emotion)
+        score = float(verdict.get("score", 0.0))
+        return _r("met" if score >= float(cfg["min_score"]) else "not_met", score=score)
+    met = bool(verdict.get("met"))
+    quote = str(verdict.get("evidence", "") or "")
+    if met and quote and quote.lower() not in ctx.get("source_text", "").lower():
+        met = False  # a met verdict with an unquotable/fabricated evidence is downgraded (fail-closed)
+    return _r("met" if met else "not_met", evidence=quote, detail=verdict.get("detail"))
+
+
 # ---- conditional wrapper --------------------------------------------------------------------------
 
 def conditional_on(cfg: dict[str, Any], ctx: Ctx) -> Result:
-    """Run the wrapped check only when its condition holds. Condition sources {deal, consent, refusal}
-    come from deal_detect (Slice 3) → in Slice 2 they're unresolved → `indeterminate` (never a silent
-    pass). `external` conditions (e-sign/GDPR) are EXT → indeterminate(reason=external)."""
+    """Run the wrapped check only when its condition holds. Condition state {deal, consent, refusal} is
+    resolved by `deal_detect` onto ctx (Slice 3). If the condition is FALSE → `na` (not applicable). If
+    the state is ABSENT (deterministic mode / no judge) → `indeterminate`. `external` (e-sign/GDPR) → EXT
+    indeterminate. Unknown condition → fail-closed indeterminate."""
     cond = str(cfg.get("condition", ""))
-    if cond in ("deal", "consent", "refusal"):
-        return _r("indeterminate", reason=f"condition '{cond}' unresolved (needs deal_detect, Slice 3)")
     if cond == "external":
         return _r("indeterminate", reason="external condition (EXT, scoped out)")
-    if cond and cond not in ("deal", "consent", "refusal", "external"):
-        return _r("indeterminate", reason=f"unknown condition '{cond}' (fail-closed)")  # not fail-open
+    if cond in ("deal", "refusal"):
+        state = ctx.get("deal")  # set by deal_detect
+        if state is None:
+            return _r("indeterminate", reason=f"condition '{cond}' unresolved (no judge)")
+        if state != cond:
+            return _r("na", reason=f"condition '{cond}' not met (deal={state})")
+    elif cond == "consent":
+        state = ctx.get("consent")
+        if state is None:
+            return _r("indeterminate", reason="condition 'consent' unresolved (no judge)")
+        if not state:
+            return _r("na", reason="no consent")
+    elif cond:
+        return _r("indeterminate", reason=f"unknown condition '{cond}' (fail-closed)")
     inner = cfg.get("check") or {}
     fn = PRIMITIVES.get(str(inner.get("primitive")))
     return fn(inner, ctx) if fn else _r("indeterminate", reason="deferred")
@@ -195,7 +316,11 @@ PRIMITIVES: dict[str, Callable[[dict[str, Any], Ctx], Result]] = {
     "composite": composite,
     "slot_present": slot_present,
     "conditional_on": conditional_on,
+    "deal_detect": deal_detect,      # CMD (Slice 3) — indeterminate without a judge
+    "path_select": path_select,      # CMD (Slice 3)
+    "judge_check": judge_check,      # CMD (Slice 3)
 }
+RESOLVER_PRIMITIVES = ("deal_detect", "path_select")  # run first; write deal/consent/path onto ctx
 
 
 def run_primitive(name: str, cfg: dict[str, Any], ctx: Ctx) -> Result:
