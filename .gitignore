@@ -11,6 +11,10 @@ __pycache__/
 .callcenter-harness/
 *.mp3
 *.wav
+*.m4a
+*.flac
+*.ogg
+*.aac
 
 # Raw client materials (A1 script/workflow) — excluded from the remote by default (confidentiality).
 # Un-ignore if you want them in the repo.

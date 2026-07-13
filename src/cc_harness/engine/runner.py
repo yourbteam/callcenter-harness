@@ -401,23 +401,38 @@ class WorkflowRunner:
             phase_state.output = result.output_text
             return
 
-        # Deterministic (default): keyword adherence + prosody-proxy intonation.
-        result = evaluator.evaluate(contract, source_text, agent_words=agent_words, duration=duration,
-                                    offer_category_id=offer_category_id)
+        # Deterministic (default): the generic RUBRIC-INTERPRETER over the client's profile.rubric →
+        # per-criterion checklist + two-tier severity (Slice 2, the M3 reframe). Prosody/intonation (M2)
+        # is preserved. CMD/AI-judge checks (deal/gating/objection-match) are Slice 3 → indeterminate here.
+        from cc_harness.phase_ledger.rubric import run_rubric
+
+        redaction_map = (run.context.get("redaction") or {}).get("redaction_map") or []
+        mandated = list(contract.get("required_phrasings") or []) + list(contract.get("ask_for_decision_phrases") or [])
+        ctx = {"source_text": source_text, "agent_words": agent_words, "redaction_map": redaction_map,
+               "mandated_regions": mandated, "duration": duration, "channel": agent_channel}
+        rubric_out = run_rubric(profile.rubric, ctx)
+
         _pt = contract.get("prosody_thresholds") or {}  # optional; else evaluator defaults (T3: client-calibrated)
         intonation = evaluator.evaluate_prosody(
             prosody_lines, speaker=str(agent_channel),
             **{k: _pt[k] for k in ("min_energy_db", "min_pace_wps", "max_pace_wps", "min_pitch_std_hz") if k in _pt})
         run.context["evaluation"] = {
             "mode": "deterministic",
-            "contract_key": result.ledger["contract_key"],
-            "manager_summary": result.ledger["manager_summary"],
-            "findings": result.ledger["findings"],
+            "contract_key": contract["contract_key"],
+            "checklist": rubric_out["checklist"],
+            "violations": rubric_out["violations"],
+            "advisories": rubric_out["advisories"],
+            "review_needed": rubric_out["review_needed"],
             "intonation": intonation,
         }
+        cl = rubric_out["checklist"]
+        met = sum(1 for r in cl if r["status"] == "met")
         phase_state.output = (
-            result.output_text
-            + f"\n\n## Delivery (agent {agent_channel})\n"
+            f"# Checklist — {contract['contract_key']} (agent {agent_channel})\n"
+            + f"{met}/{len(cl)} met | {len(rubric_out['violations'])} violations | "
+            + f"{len(rubric_out['advisories'])} advisories | {len(rubric_out['review_needed'])} need review\n"
+            + "".join(f"- [{r['status']}] {r['id']} ({r['tier']})\n" for r in cl)
+            + f"\n## Delivery (agent {agent_channel})\n"
             + f"- mean pace: {intonation['mean_pace_wps']} wps; mean energy: {intonation['mean_energy_db']} dB\n"
             + f"- flags: {', '.join(intonation['flags']) or 'none'}"
         )

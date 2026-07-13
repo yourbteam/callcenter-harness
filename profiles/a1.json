@@ -183,5 +183,172 @@
       "min_pitch_std_hz": 15.0
     },
     "_prosody_thresholds_note": "PLACEHOLDER tone thresholds — CLIENT TO CALIBRATE against labeled calls (FirstWorkflow интонация/вяло criteria). Absent block ⇒ evaluator defaults. monotone_delivery fires when agent pitch std < min_pitch_std_hz."
-  }
+  },
+  "rubric": [
+    {
+      "id": "identify_a1",
+      "primitive": "phrase_present",
+      "tier": "hard",
+      "phrases": [
+        "А1",
+        "А 1",
+        "от името"
+      ]
+    },
+    {
+      "id": "record_consent",
+      "primitive": "phrase_present",
+      "tier": "hard",
+      "phrases": [
+        "записва",
+        "обслужване"
+      ]
+    },
+    {
+      "id": "discount_offer",
+      "primitive": "phrase_present",
+      "tier": "hard",
+      "phrases": [
+        "отстъпк"
+      ]
+    },
+    {
+      "id": "speed_channels",
+      "primitive": "phrase_present",
+      "tier": "hard",
+      "phrases": [
+        "Mbps",
+        "канал",
+        "скорост"
+      ]
+    },
+    {
+      "id": "price_structure",
+      "primitive": "numeric_structure",
+      "tier": "hard",
+      "min_values": 2,
+      "currency": [
+        "евро",
+        "лв",
+        "eur",
+        "€"
+      ]
+    },
+    {
+      "id": "device_bonus",
+      "primitive": "phrase_present",
+      "tier": "soft",
+      "phrases": [
+        "слушалк",
+        "Huawei",
+        "гривн"
+      ]
+    },
+    {
+      "id": "right_of_withdrawal",
+      "primitive": "phrase_present",
+      "tier": "hard",
+      "phrases": [
+        "14 дни",
+        "откажете",
+        "неустойка"
+      ]
+    },
+    {
+      "id": "final_summary",
+      "primitive": "phrase_present",
+      "tier": "hard",
+      "phrases": [
+        "обобщ",
+        "приемате"
+      ]
+    },
+    {
+      "id": "polite_close",
+      "primitive": "phrase_present",
+      "tier": "hard",
+      "phrases": [
+        "благодар",
+        "приятен ден",
+        "приятна"
+      ]
+    },
+    {
+      "id": "consent_before_offer",
+      "primitive": "phrase_ordering",
+      "tier": "hard",
+      "before_phrases": [
+        "записва",
+        "обслужване"
+      ],
+      "after_phrases": [
+        "отстъпк"
+      ]
+    },
+    {
+      "id": "prefer_words",
+      "primitive": "word_prefer",
+      "tier": "soft",
+      "words": [
+        "ще",
+        "отстъпка",
+        "получавате",
+        "вземате",
+        "полага ви се"
+      ]
+    },
+    {
+      "id": "avoid_words",
+      "primitive": "word_avoid",
+      "tier": "soft",
+      "except_in_mandated_spans": true,
+      "words": [
+        "купувате",
+        "таксуваме",
+        "можете",
+        "мога",
+        "бих могъл"
+      ]
+    },
+    {
+      "id": "opening_density",
+      "primitive": "opening_density",
+      "tier": "soft",
+      "n": 10,
+      "min_words": 12
+    },
+    {
+      "id": "name_said",
+      "primitive": "slot_present",
+      "tier": "hard",
+      "slot_categories": [
+        "NER_PER",
+        "GLINER_PII",
+        "MULTI",
+        "NER_PERSON"
+      ],
+      "channel": null,
+      "region": {
+        "from": 0.0,
+        "to": 20.0
+      }
+    },
+    {
+      "id": "legal_read_on_deal",
+      "primitive": "conditional_on",
+      "tier": "hard",
+      "condition": "deal",
+      "check": {
+        "primitive": "phrase_present",
+        "phrases": [
+          "законов",
+          "право на отказ",
+          "неустойка"
+        ]
+      }
+    }
+  ],
+  "call_paths": [],
+  "service_branches": {},
+  "legal_variants": []
 }

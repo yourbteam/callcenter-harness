@@ -35,6 +35,12 @@ class Profile:
     offer_category_id: str
     contract: dict[str, Any]
     call_path: str = "default"
+    # Slice 2: the client's scoring rubric (typed checks) + supporting DATA. Optional (a profile with no
+    # rubric still runs Slice-1 scoring). `field(default_factory)` — mutable defaults on a frozen dataclass.
+    rubric: list[dict[str, Any]] = field(default_factory=list)
+    call_paths: list[dict[str, Any]] = field(default_factory=list)
+    service_branches: dict[str, Any] = field(default_factory=dict)
+    legal_variants: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -76,6 +82,14 @@ def load_profile(path: str) -> Profile:
     _require(data, PROFILE_REQUIRED, "profile")
     if not isinstance(data["contract"], dict) or not data["agent_markers"]:
         raise ConfigError("profile: `contract` must be an object and `agent_markers` non-empty")
+    rubric = data.get("rubric") or []
+    if not isinstance(rubric, list):
+        raise ConfigError("profile: `rubric` must be a list")
+    for i, entry in enumerate(rubric):  # fail-closed on a malformed rubric check (M3 §11)
+        if not isinstance(entry, dict) or not entry.get("id") or not entry.get("primitive"):
+            raise ConfigError(f"profile: rubric[{i}] must have `id` and `primitive`")
+        if entry.get("tier") not in ("hard", "soft"):
+            raise ConfigError(f"profile: rubric[{i}] `tier` must be 'hard' or 'soft'")
     return Profile(
         schema_version=int(data["schema_version"]),
         client_key=str(data["client_key"]),
@@ -84,6 +98,10 @@ def load_profile(path: str) -> Profile:
         offer_category_id=str(data["offer_category_id"]),
         contract=dict(data["contract"]),
         call_path=str(data.get("call_path") or "default"),
+        rubric=list(rubric),
+        call_paths=list(data.get("call_paths") or []),
+        service_branches=dict(data.get("service_branches") or {}),
+        legal_variants=list(data.get("legal_variants") or []),
     )
 
 
