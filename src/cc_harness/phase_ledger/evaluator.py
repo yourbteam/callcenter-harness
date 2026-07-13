@@ -24,12 +24,16 @@ class EvalResult:
     output_text: str
 
 
-def load_contract(path: str) -> dict[str, Any]:
-    contract = json.loads(Path(path).read_text(encoding="utf-8"))
+def validate_contract(contract: dict[str, Any]) -> dict[str, Any]:
+    """Validate an in-memory contract dict (as absorbed into a client profile). Raises on missing keys."""
     for key in ("contract_key", "id_prefix", "categories_detail"):
         if key not in contract:
             raise ValueError(f"contract missing required key: {key}")
     return contract
+
+
+def load_contract(path: str) -> dict[str, Any]:
+    return validate_contract(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
 def _find_quote(source_text: str, keywords: list[str], window: int = 40) -> str | None:
@@ -117,9 +121,11 @@ def persistence(source_text: str, offer_keywords: list[str],
 
 
 def gap_checks(contract: dict[str, Any], source_text: str,
-               agent_words: list[dict[str, Any]] | None, duration: float | None) -> dict[str, Any]:
+               agent_words: list[dict[str, Any]] | None, duration: float | None,
+               offer_category_id: str) -> dict[str, Any]:
     """Aggregate the deterministic ClientFiles gap checks into additive manager-summary fields. All
-    driven by OPTIONAL contract blocks; a missing block yields a `*_na` for that check."""
+    driven by OPTIONAL contract blocks; a missing block yields a `*_na` for that check.
+    `offer_category_id` (the client's offer category) comes from the profile — not hardcoded."""
     cat_kw = {str(d["category"]): [str(k) for k in d.get("keywords", [])]
               for d in contract.get("categories_detail", [])}
     fs = contract.get("first_seconds") or {}
@@ -128,14 +134,14 @@ def gap_checks(contract: dict[str, Any], source_text: str,
     out.update(check_forbidden(source_text, contract.get("forbidden_words") or []))
     out.update(check_required_phrasings(source_text, contract.get("required_phrasings") or []))
     out.update(first_seconds_engagement(agent_words, float(fs.get("n", 10)), int(fs.get("min_words", 12))))
-    out.update(persistence(source_text, cat_kw.get("offer1_discount", []),
+    out.update(persistence(source_text, cat_kw.get(offer_category_id, []),
                            contract.get("ask_for_decision_phrases") or []))
     return out
 
 
 def evaluate(contract: dict[str, Any], source_text: str, *,
              agent_words: list[dict[str, Any]] | None = None,
-             duration: float | None = None) -> EvalResult:
+             duration: float | None = None, offer_category_id: str = "") -> EvalResult:
     items: list[dict[str, Any]] = []
     findings: list[dict[str, Any]] = []
     for idx, detail in enumerate(contract["categories_detail"], start=1):
@@ -178,7 +184,7 @@ def evaluate(contract: dict[str, Any], source_text: str, *,
         "exact_source_quote_coverage": (exact == len(quotes)) if quotes else False,
         "category_status": {i["category"]: i["matched"] for i in items},
     }
-    summary.update(gap_checks(contract, source_text, agent_words, duration))  # G1/G2/G4/G5/G6 (additive)
+    summary.update(gap_checks(contract, source_text, agent_words, duration, offer_category_id))  # G1/G2/G4/G5/G6 (additive)
     ledger = {
         "contract_key": contract["contract_key"],
         "status": "completed" if not findings else "findings",
@@ -258,6 +264,7 @@ def evaluate_command(
     contract: dict[str, Any], source_text: str, prosody_summary: str, executor: Any, *,
     agent_words: list[dict[str, Any]] | None = None, duration: float | None = None,
     customer_text: str | None = None, conveyed_threshold: float = 0.5,
+    offer_category_id: str = "",
 ) -> EvalResult:
     """Model-judged script adherence + emotion + active listening (+ optional objection). The executor
     runs the configured model command; its JSON is validated strictly (G8 — malformed output raises, the
@@ -327,7 +334,7 @@ def evaluate_command(
              f"- Exact source-quote coverage: {summary['exact_source_quote_coverage']}", ""]
     for it in items:
         lines.append(f"- {'✅' if it['matched'] else '❌'} `{it['id']}` {it['category']} (conveyed={it['conveyed']})")
-    summary.update(gap_checks(contract, source_text, agent_words, duration))  # G1/G2/G4/G5/G6 (additive)
+    summary.update(gap_checks(contract, source_text, agent_words, duration, offer_category_id))  # G1/G2/G4/G5/G6 (additive)
     summary.update(_parse_objection(payload))  # G3 (optional; na if judge omits it)
     ledger = {"contract_key": contract["contract_key"],
               "status": "completed" if not findings else "findings",

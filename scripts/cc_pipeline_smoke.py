@@ -29,7 +29,7 @@ def main() -> None:
     sample = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.home() / "Downloads" / "1783081704.mp3"
     check("sample exists", sample.is_file(), str(sample))
 
-    run = WorkflowRunner().start("pipeline", {"recording_path": str(sample)})
+    run = WorkflowRunner().start("pipeline", {"recording_path": str(sample), "profile": "profiles/a1.json"})
     if (run.context.get("redaction") or {}).get("held"):
         check("redaction not held", False, run.context["redaction"].get("reason", ""))
     check("pipeline run completed", run.status == "completed", f"status={run.status}")

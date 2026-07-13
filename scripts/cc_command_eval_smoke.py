@@ -32,7 +32,7 @@ def main() -> None:
     _cmd = os.environ.get("CC_HARNESS_AGENT_COMMAND", "")
     check(f"CC_HARNESS_AGENT_COMMAND set → {_cmd or '(unset)'}", bool(_cmd))
 
-    run = WorkflowRunner().start("callcenter-qa", {"recording_path": rec, "execution_mode": "command"})
+    run = WorkflowRunner().start("callcenter-qa", {"recording_path": rec, "execution_mode": "command", "profile": "profiles/a1.json"})
     ev = run.context.get("evaluation", {})
     check("command-mode run completed", run.status == "completed" and not ev.get("held"), f"status={run.status}")
     check("mode is command", ev.get("mode") == "command")
@@ -46,7 +46,7 @@ def main() -> None:
     # Fail-closed: same run without the command configured must HOLD.
     saved = os.environ.pop("CC_HARNESS_AGENT_COMMAND", None)
     try:
-        run2 = WorkflowRunner().start("callcenter-qa", {"recording_path": rec, "execution_mode": "command"})
+        run2 = WorkflowRunner().start("callcenter-qa", {"recording_path": rec, "execution_mode": "command", "profile": "profiles/a1.json"})
     finally:
         if saved is not None:
             os.environ["CC_HARNESS_AGENT_COMMAND"] = saved

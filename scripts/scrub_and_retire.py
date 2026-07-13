@@ -60,7 +60,7 @@ def main() -> None:
         if not original.is_file():
             print(f"[retire] SKIP (not found): {original}")
             continue
-        run = WorkflowRunner().start("callcenter-qa", {"recording_path": str(original)})
+        run = WorkflowRunner().start("callcenter-qa", {"recording_path": str(original), "profile": "profiles/a1.json"})
         red = run.context.get("redaction") or {}
         compliant = red.get("compliant_recording")
         scrub_ok = (not red.get("held")) and bool(compliant) and Path(compliant).is_file()

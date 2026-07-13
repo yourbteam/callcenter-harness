@@ -11,8 +11,7 @@
      "max_attempts": 3},
     {"id": "prosody-1", "name": "Prosody", "type": "prosody", "depends_on": ["redact-1", "transcribe-1"], "subscribes_to": ["redact-1", "transcribe-1"],
      "max_attempts": 3},
-    {"id": "classify-1", "name": "Classify", "type": "call_path_classify", "depends_on": ["transcribe-1"], "subscribes_to": ["transcribe-1"],
-     "call_path_classify": {"call_path": "newplan_esign", "contract_path": "contracts/callcenter-newplan-esign.json"}},
+    {"id": "classify-1", "name": "Classify", "type": "call_path_classify", "depends_on": ["transcribe-1"], "subscribes_to": ["transcribe-1"]},
     {"id": "evaluate-1", "name": "Evaluate", "type": "phase_ledger", "depends_on": ["classify-1", "transcribe-1", "prosody-1"], "subscribes_to": ["classify-1", "transcribe-1", "prosody-1"]}
   ]
 }

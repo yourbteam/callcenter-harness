@@ -29,7 +29,7 @@ def main() -> None:
     sample = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.home() / "Downloads" / "1783081704.mp3"
     check("sample exists", sample.is_file(), str(sample))
 
-    run = WorkflowRunner().start("redact", {"recording_path": str(sample)})
+    run = WorkflowRunner().start("redact", {"recording_path": str(sample), "profile": "profiles/a1.json"})
     red = run.context.get("redaction", {})
     if red.get("held"):
         check("redaction not held", False, f"held: {red.get('reason')}")

@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "client_key": "a1",
+  "language": "bg",
+  "agent_markers": [
+    "оферта",
+    "отстъпк",
+    "договор",
+    "месечна такса",
+    "канал",
+    "интернет",
+    "обажда",
+    "от името",
+    "записва",
+    "възползвате",
+    "рутер",
+    "евро"
+  ],
+  "offer_category_id": "offer1_discount",
+  "call_path": "newplan_esign",
+  "contract": {
+    "contract_key": "callcenter-newplan-esign",
+    "id_prefix": "CC",
+    "description": "Mandatory script elements for the new-tariff-plan / e-sign call path (CallScript.docx). PII-content elements (address/name recital) are excluded per requirements §3.5.",
+    "categories_detail": [
+      {
+        "category": "opening_consent",
+        "keywords": [
+          "записва",
+          "обслужване"
+        ],
+        "minimum_count": 1,
+        "summary": "record-consent disclosure"
+      },
+      {
+        "category": "identify_a1",
+        "keywords": [
+          "А1",
+          "А 1",
+          "от името"
+        ],
+        "minimum_count": 1,
+        "summary": "identify as A1"
+      },
+      {
+        "category": "offer1_discount",
+        "keywords": [
+          "отстъпк"
+        ],
+        "minimum_count": 1,
+        "summary": "discount on monthly fee"
+      },
+      {
+        "category": "device_bonus",
+        "keywords": [
+          "слушалк",
+          "Huawei",
+          "гривн"
+        ],
+        "minimum_count": 0,
+        "summary": "device bonus (headphones/band)"
+      },
+      {
+        "category": "upsell_speed_channels",
+        "keywords": [
+          "Mbps",
+          "канал",
+          "скорост"
+        ],
+        "minimum_count": 1,
+        "summary": "speed/channels upsell"
+      },
+      {
+        "category": "select_packages",
+        "keywords": [
+          "Netflix",
+          "HBO",
+          "Diema",
+          "MAX",
+          "VOYO"
+        ],
+        "minimum_count": 0,
+        "summary": "select streaming packages"
+      },
+      {
+        "category": "price_framing",
+        "keywords": [
+          "евро",
+          "месеца",
+          "такса"
+        ],
+        "minimum_count": 1,
+        "summary": "price framing (12+12 months)"
+      },
+      {
+        "category": "cross_sell_check",
+        "keywords": [
+          "MBB",
+          "Netbox",
+          "карта"
+        ],
+        "minimum_count": 0,
+        "summary": "mandatory MBB/Netbox card check"
+      },
+      {
+        "category": "post_acceptance_questions",
+        "keywords": [
+          "рутер",
+          "слушалките"
+        ],
+        "minimum_count": 0,
+        "summary": "post-acceptance offer questions"
+      },
+      {
+        "category": "legal_withdrawal",
+        "keywords": [
+          "14 дни",
+          "откажете",
+          "неустойка"
+        ],
+        "minimum_count": 1,
+        "summary": "14-day withdrawal right"
+      },
+      {
+        "category": "closing_recap",
+        "keywords": [
+          "обобщ",
+          "приемате",
+          "за Ваше спокойствие"
+        ],
+        "minimum_count": 1,
+        "summary": "mandatory closing recap"
+      },
+      {
+        "category": "thank_you",
+        "keywords": [
+          "благодар",
+          "приятен ден",
+          "приятна"
+        ],
+        "minimum_count": 1,
+        "summary": "thank-you close"
+      }
+    ],
+    "ordering": [
+      {
+        "before": "offer1_discount",
+        "after": "select_packages"
+      },
+      {
+        "before": "offer1_discount",
+        "after": "post_acceptance_questions"
+      }
+    ],
+    "forbidden_words": [],
+    "required_phrasings": [],
+    "_forbidden_required_note": "CLIENT TO PROVIDE: the exact words that must NOT be used and the phrasings that must be said verbatim (FirstWorkflow.md:13). Empty ⇒ those checks report na.",
+    "ask_for_decision_phrases": [
+      "да запишем",
+      "да продължим",
+      "съгласни ли сте",
+      "потвърждавате",
+      "да активираме",
+      "искате ли"
+    ],
+    "first_seconds": {
+      "n": 10,
+      "min_words": 12
+    },
+    "objection_cues": [
+      "не е удобно",
+      "на работа",
+      "зает",
+      "не искам",
+      "нямам време",
+      "не ме интересува"
+    ],
+    "_objection_note": "objection_cues seeded from the CallScript.docx objection branch; CLIENT TO CONFIRM. Used by the LLM judge (command mode).",
+    "prosody_thresholds": {
+      "min_energy_db": 55.0,
+      "min_pace_wps": 1.5,
+      "max_pace_wps": 4.5,
+      "min_pitch_std_hz": 15.0
+    },
+    "_prosody_thresholds_note": "PLACEHOLDER tone thresholds — CLIENT TO CALIBRATE against labeled calls (FirstWorkflow интонация/вяло criteria). Absent block ⇒ evaluator defaults. monotone_delivery fires when agent pitch std < min_pitch_std_hz."
+  }
+}

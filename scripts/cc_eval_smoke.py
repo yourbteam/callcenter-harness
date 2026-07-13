@@ -28,7 +28,7 @@ def main() -> None:
     sample = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.home() / "Downloads" / "1783081704.mp3"
     check("sample exists", sample.is_file(), str(sample))
 
-    run = WorkflowRunner().start("callcenter-qa", {"recording_path": str(sample)})
+    run = WorkflowRunner().start("callcenter-qa", {"recording_path": str(sample), "profile": "profiles/a1.json"})
     for stage in ("redaction", "transcription", "prosody"):
         if (run.context.get(stage) or {}).get("held"):
             check(f"{stage} not held", False, run.context[stage].get("reason", ""))
@@ -36,7 +36,9 @@ def main() -> None:
 
     cls = run.context.get("classify") or {}
     check("agent channel identified", bool(cls.get("agent_channel")), f"agent={cls.get('agent_channel')}")
-    check("contract selected via override", run.context.get("evaluation_contract_path") == cls.get("contract_path"))
+    # classify hands the resolved contract DICT (not a path) to phase_ledger via context (Slice 1).
+    ec = run.context.get("evaluation_contract") or {}
+    check("contract dict handed to eval via override", bool(ec.get("contract_key")) and "categories_detail" in ec)
 
     ev = run.context.get("evaluation") or {}
     summ = ev.get("manager_summary") or {}

@@ -16,28 +16,11 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any, Callable
 
-EGN_WEIGHTS = [2, 4, 8, 5, 10, 9, 7, 3, 6]
+EGN_WEIGHTS = [2, 4, 8, 5, 10, 9, 7, 3, 6]  # EGN checksum weights; used only when the language pack enables egn
 
-# Lead-in phrases after which the following tokens are likely PII (grounded in CallScript phrasing).
-CONTEXT_LEAD_INS = [
-    "на адрес", "адрес", "егн", "е.г.н", "г-н", "г-жа", "господин", "госпожо",
-    "телефон", "мобилен", "номер", "клиентски номер", "договор", "абонатен",
-    "имейл", "имейла", "мейл", "е-мейл", "електронна поща",
-]
-
-# Bulgarian number words (units, teens, tens, hundreds, thousand). A run of >= min_run consecutive
-# number-words is a spoken phone/EGN/account number that STT wrote as words (recall gap H1).
-BG_NUMBER_WORDS = frozenset({
-    "нула", "едно", "един", "една", "две", "два", "три", "четири", "пет", "шест", "седем", "осем", "девет",
-    "десет", "единайсет", "единадесет", "дванайсет", "дванадесет", "тринайсет", "тринадесет",
-    "четиринайсет", "четиринадесет", "петнайсет", "петнадесет", "шестнайсет", "шестнадесет",
-    "седемнайсет", "седемнадесет", "осемнайсет", "осемнадесет", "деветнайсет", "деветнадесет",
-    "двайсет", "двадесет", "тридесет", "четиридесет", "петдесет", "шейсет", "шестдесет",
-    "седемдесет", "осемдесет", "деветдесет",
-    "сто", "двеста", "триста", "четиристотин", "петстотин", "шестстотин", "седемстотин",
-    "осемстотин", "деветстотин", "хиляда", "хиляди",
-})
-_NUM_CONNECTOR = "и"
+# NOTE (Slice 1): locale vocabularies (PII lead-in cues, spoken-number words, number connector) and the
+# client's agent-script markers now live in `languages/<lang>.json` + `profiles/<client>.json` and are
+# passed in as arguments — the engine holds no client/locale literals.
 
 
 @dataclass(frozen=True)
@@ -83,8 +66,8 @@ def build_text_and_map(words: list[dict[str, Any]]) -> tuple[str, list[int]]:
     return "".join(parts), char_to_word
 
 
-def _classify_number(digits: str) -> str:
-    if len(digits) == 10 and egn_checksum_ok(digits):
+def _classify_number(digits: str, egn: bool = True) -> str:
+    if egn and len(digits) == 10 and egn_checksum_ok(digits):  # EGN is a per-locale recognizer (language pack)
         return "EGN"
     if luhn_ok(digits) and 13 <= len(digits) <= 19:
         return "CARD"
@@ -93,42 +76,43 @@ def _classify_number(digits: str) -> str:
     return "NUMERIC_RUN"  # catch-all — masked regardless (recall bias)
 
 
-def find_pattern_spans(text: str) -> list[Span]:
+def find_pattern_spans(text: str, iban_prefix: str, egn: bool = True) -> list[Span]:
+    """`iban_prefix` (e.g. "BG") + `egn` toggle come from the language pack (locale recognizers)."""
     spans: list[Span] = []
-    # BG IBAN: BG + 2 check digits + 18 alphanumerics.
-    for m in re.finditer(r"\bBG\d{2}[A-Z0-9]{18}\b", text, re.IGNORECASE):
+    # IBAN: <prefix> + 2 check digits + 18 alphanumerics.
+    for m in re.finditer(rf"\b{re.escape(iban_prefix)}\d{{2}}[A-Z0-9]{{18}}\b", text, re.IGNORECASE):
         spans.append(Span(m.start(), m.end(), "IBAN"))
     # Number runs: >=5 digit-ish chars, allowing internal spaces/dashes (spoken digit groups).
     for m in re.finditer(r"\d[\d \-]{3,}\d", text):
         digits = re.sub(r"\D", "", m.group())
         if len(digits) >= 5:
-            spans.append(Span(m.start(), m.end(), _classify_number(digits)))
+            spans.append(Span(m.start(), m.end(), _classify_number(digits, egn)))
     return spans
 
 
-def _is_number_token(tok: str) -> bool:
-    """A number token = a Bulgarian number-word OR a digit group (e.g. '88')."""
-    return tok.isdigit() or tok.lower() in BG_NUMBER_WORDS
+def _is_number_token(tok: str, number_words: frozenset[str]) -> bool:
+    """A number token = a language number-word OR a digit group (e.g. '88')."""
+    return tok.isdigit() or tok.lower() in number_words
 
 
-def find_number_token_spans(text: str, min_run: int = 4) -> list[Span]:
-    """H1: mask a run of >= min_run consecutive number-TOKENS — each a Bulgarian number-WORD or a digit
-    group. Closes the seam where a spoken phone/EGN that STT wrote as a MIX of words+digits (e.g.
-    "0 осемдесет осем 9 седем") falls below both the digit-run (>=5 digits) and the word-run recognizers.
-    Connector 'и' is allowed but not counted. Recall-biased; category PHONE_OR_ID (segment-level mask).
-    min_run=4 avoids single spoken numbers ("две минути", "12 месеца")."""
-    toks = [(m.group(), m.start(), m.end()) for m in re.finditer(r"\d+|[A-Za-zА-Яа-я]+", text)]
+def find_number_token_spans(text: str, number_words: frozenset[str], connector: str, min_run: int = 4) -> list[Span]:
+    """H1: mask a run of >= min_run consecutive number-TOKENS — each a language number-WORD (from the
+    language pack) or a digit group. Closes the seam where a spoken phone/EGN that STT wrote as a MIX of
+    words+digits (e.g. "0 <eighty> <eight> 9 <seven>") falls below both the digit-run (>=5 digits) and the
+    word-run recognizers. The `connector` word is allowed but not counted. Recall-biased; category
+    PHONE_OR_ID (segment-level mask). min_run=4 avoids single spoken numbers (e.g. "<two> minutes")."""
+    toks = [(m.group(), m.start(), m.end()) for m in re.finditer(r"\d+|[^\W\d_]+", text, re.UNICODE)]
     spans: list[Span] = []
     i, n = 0, len(toks)
     while i < n:
-        if not _is_number_token(toks[i][0]):
+        if not _is_number_token(toks[i][0], number_words):
             i += 1
             continue
         j, count, last_end = i, 0, toks[i][2]
-        while j < n and (_is_number_token(toks[j][0]) or toks[j][0].lower() == _NUM_CONNECTOR):
-            if _is_number_token(toks[j][0]):
+        while j < n and (_is_number_token(toks[j][0], number_words) or toks[j][0].lower() == connector):
+            if _is_number_token(toks[j][0], number_words):
                 count += 1
-                last_end = toks[j][2]  # end at the last NUMBER token (trims a trailing 'и')
+                last_end = toks[j][2]  # end at the last NUMBER token (trims a trailing connector)
             j += 1
         if count >= min_run:
             spans.append(Span(toks[i][1], last_end, "PHONE_OR_ID"))
@@ -142,11 +126,12 @@ def find_email_spans(text: str) -> list[Span]:
             for m in re.finditer(r"[\w.+\-]+@[\w\-]+\.[\w.\-]+", text)]
 
 
-def find_context_spans(text: str, follow_chars: int = 40) -> list[Span]:
-    """Mask a window after each lead-in phrase (names/addresses spoken after known cues)."""
+def find_context_spans(text: str, lead_ins: list[str], follow_chars: int = 40) -> list[Span]:
+    """Mask a window after each lead-in phrase (names/addresses spoken after known cues).
+    `lead_ins` come from the language pack (locale PII cues)."""
     spans: list[Span] = []
     low = text.lower()
-    for lead in CONTEXT_LEAD_INS:
+    for lead in lead_ins:
         idx = 0
         while True:
             pos = low.find(lead, idx)
@@ -164,33 +149,29 @@ def find_context_spans(text: str, follow_chars: int = 40) -> list[Span]:
     return spans
 
 
-# Distinctive agent-script markers (Bulgarian) used only to tell the agent channel from the customer
-# channel for the §7 masking bound — the agent recites the script.
-SCRIPT_MARKERS = [
-    "оферта", "отстъпк", "договор", "месечна такса", "канал", "интернет",
-    "обажда", "от името", "записва", "възползвате", "рутер", "евро",
-]
-
-
-def pick_agent_channel(channel_texts: dict[str, str]) -> str | None:
-    """Agent = channel with the most script-marker hits. None if all channels score 0."""
-    scored = {chan: sum(text.lower().count(m) for m in SCRIPT_MARKERS) for chan, text in channel_texts.items()}
+def pick_agent_channel(channel_texts: dict[str, str], markers: list[str]) -> str | None:
+    """Agent = channel with the most script-marker hits. `markers` come from `profile.agent_markers`
+    (per-client). None if all channels score 0."""
+    scored = {chan: sum(text.lower().count(m.lower()) for m in markers) for chan, text in channel_texts.items()}
     best = max(scored, key=lambda c: scored[c]) if scored else None
     return best if best is not None and scored[best] > 0 else None
 
 
 def detect_spans(
-    text: str, ner_hook: Callable[[str], list[Span]] | None = None, include_context: bool = True
+    text: str, *, number_words: frozenset[str], connector: str, lead_ins: list[str],
+    iban_prefix: str, egn: bool = True,
+    ner_hook: Callable[[str], list[Span]] | None = None, include_context: bool = True,
 ) -> list[Span]:
-    """Union of all recognizers (recall bias). ner_hook adds ML NER spans when available.
+    """Union of all recognizers (recall bias). Locale vocab (number_words/connector/lead_ins/iban_prefix/
+    egn) comes from the language pack; ner_hook adds ML NER spans when available.
     include_context=False drops the broad lead-in window over-masking — used on the AGENT channel (§7
     masking bound) so the agent's script delivery stays assessable; patterns + NER still mask actual
     customer PII the agent recites (names/addresses via NER, numbers/EGN via patterns)."""
-    spans = list(find_pattern_spans(text))
-    spans += find_number_token_spans(text)  # H1: spoken numbers as words/digits/mix (both channels)
+    spans = list(find_pattern_spans(text, iban_prefix, egn))
+    spans += find_number_token_spans(text, number_words, connector)  # H1: spoken numbers words/digits/mix
     spans += find_email_spans(text)        # H2: email addresses (both channels)
     if include_context:
-        spans += find_context_spans(text)
+        spans += find_context_spans(text, lead_ins)
     if ner_hook is not None:
         spans.extend(ner_hook(text))
     return spans

@@ -20,8 +20,8 @@ MODELS = Path(os.path.expanduser("~/.callcenter-harness/models"))
 BG_NER_DIR = MODELS / "bg-ner"
 GLINER_DIR = MODELS / "gliner-multi"
 
-# GLiNER zero-shot labels (Bulgarian) for the entities we redact.
-GLINER_LABELS = ["име", "фамилия", "адрес", "населено място", "организация"]
+# GLiNER zero-shot entity labels now come from the language pack (`languages/<lang>.json`, `ner_labels`)
+# and are passed into ner_spans() — the engine holds no locale label literals.
 
 # Long-call recall: both NER models truncate a single forward pass (bg-ner ~512 tok, GLiNER 384 tok —
 # confirmed empirically: a name spoken late in a long transcript is dropped), so window the transcript
@@ -81,8 +81,9 @@ def _chunks(text: str, max_chars: int = NER_MAX_CHARS, overlap: int = NER_OVERLA
     return chunks
 
 
-def ner_spans(text: str) -> list[Span]:
-    """Union of BG-NER and GLiNER entity spans (names/addresses/orgs). Raises if a model can't load.
+def ner_spans(text: str, labels: list[str]) -> list[Span]:
+    """Union of BG-NER and GLiNER entity spans (names/addresses/orgs). `labels` (GLiNER zero-shot entity
+    labels) come from the language pack. Raises if a model can't load.
     Long transcripts are windowed (_chunks): both models truncate a single forward pass, so a name
     spoken late in a long call would leak. Per-chunk offsets are translated by the window's absolute
     start so spans resolve to the correct audio times downstream (redact.spans_to_time_ranges)."""
@@ -97,6 +98,6 @@ def ner_spans(text: str) -> list[Span]:
             group = str(ent.get("entity_group") or ent.get("entity") or "").upper()
             if any(tag in group for tag in pii_tags):
                 spans.append(Span(base + int(ent["start"]), base + int(ent["end"]), f"NER_{group}"))
-        for ent in gliner.predict_entities(chunk, GLINER_LABELS):
+        for ent in gliner.predict_entities(chunk, labels):
             spans.append(Span(base + int(ent["start"]), base + int(ent["end"]), "GLINER_PII"))
     return spans

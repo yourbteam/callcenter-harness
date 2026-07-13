@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "client_key": "demo",
+  "language": "xx",
+  "agent_markers": ["widget", "warranty", "upgrade"],
+  "offer_category_id": "promo",
+  "call_path": "demo_flow",
+  "contract": {
+    "contract_key": "demo",
+    "id_prefix": "DEMO",
+    "categories_detail": [
+      {"category": "greeting", "keywords": ["hello", "welcome"], "minimum_count": 1, "summary": "greet"},
+      {"category": "promo", "keywords": ["discount", "offer"], "minimum_count": 1, "summary": "promo"}
+    ]
+  }
+}

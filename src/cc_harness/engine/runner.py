@@ -34,6 +34,24 @@ class WorkflowRunner:
         workflow = load_workflow(workflow_name)
         run = WorkflowRun.create(workflow.name, context={"inputs": inputs or {}})
         self.store.save(run)
+        # Load the per-client profile + language pack when supplied (fail-closed → HOLD on bad config).
+        # Phases that need it (redaction/transcription/classify/prosody/phase_ledger) HOLD if it's absent;
+        # noop/ingest do not require it. (Slice 1: config-driven, per-client JSON.)
+        profile_path = (inputs or {}).get("profile")
+        if profile_path:
+            from cc_harness.config.loader import ConfigError, load_language, load_profile
+            try:
+                profile = load_profile(str(profile_path))
+                lang = load_language(profile.language)
+            except ConfigError as exc:
+                run.status = "blocked"
+                run.context["config"] = {"held": True, "reason": f"config error: {exc}"}
+                self.store.save(run)
+                return run
+            # Attach as runtime attributes (NOT run.context) — the store JSON-serializes context and
+            # these dataclasses/frozensets aren't serializable. Transient per-run config, not state.
+            run.profile = profile  # type: ignore[attr-defined]
+            run.lang = lang        # type: ignore[attr-defined]
         try:
             self._run_workflow(workflow, run)
         except Exception as exc:  # noqa: BLE001 - surface any phase failure on the run
@@ -138,19 +156,25 @@ class WorkflowRunner:
         require_ner = bool(cfg.get("require_ner", True))
         min_conf = float(cfg.get("min_mean_word_probability", 0.30))
         pad = float(cfg.get("pad_seconds", 0.25))
-        model_dir = cfg.get("stt_model_dir")
 
         def hold(reason: str, extra: dict[str, Any] | None = None) -> None:
             run.status = "blocked"
             run.context["redaction"] = {"held": True, "reason": reason, **(extra or {})}
             phase_state.output = f"held_for_review: {reason}"
 
+        # Profile + language pack are required for redaction (per-client markers + locale vocab).
+        profile = getattr(run, "profile", None)
+        lang = getattr(run, "lang", None)
+        if profile is None or lang is None:
+            return hold("no client profile / language pack (pass inputs.profile)")
+        model_dir = cfg.get("stt_model_dir") or lang.stt_model_dir
+
         # Fail-closed: NER required but not vendored → HOLD, don't under-detect (NFR-6/FR-2.3).
         ner_hook = None
         if require_ner:
             if not ner_mod.models_present():
                 return hold("NER models not vendored (fail-closed)")
-            ner_hook = ner_mod.ner_spans
+            ner_hook = lambda t: ner_mod.ner_spans(t, lang.ner_labels)  # noqa: E731 - labels from language pack
 
         out_base = Path.home() / ".callcenter-harness" / "runs" / run.run_id / "redact"
         out_base.mkdir(parents=True, exist_ok=True)
@@ -160,7 +184,7 @@ class WorkflowRunner:
         # the agent vs customer role (for the §7 masking bound).
         channel_data: dict[str, tuple[str, list[dict[str, Any]], str, list[int]]] = {}
         for chan, path in channels:
-            words, info = stt.transcribe_words(path, model_dir=model_dir) if model_dir else stt.transcribe_words(path)
+            words, info = stt.transcribe_words(path, language=lang.stt_language, model_dir=model_dir)
             # Fail-closed: a missing confidence signal HOLDS (default 0.0), never passes (FR-2.3).
             if info.get("mean_word_probability", 0.0) < min_conf:
                 return hold("low STT confidence", {"channel": chan, "mean_word_probability": info.get("mean_word_probability")})
@@ -170,7 +194,7 @@ class WorkflowRunner:
         # §7 masking bound: the agent channel is masked with a BOUNDED detector set (no broad context
         # over-masking) so agent script delivery stays assessable for eval dims 2-3; the customer
         # channel gets the full recall-biased union.
-        agent_channel = redact.pick_agent_channel({c: d[2] for c, d in channel_data.items()})
+        agent_channel = redact.pick_agent_channel({c: d[2] for c, d in channel_data.items()}, profile.agent_markers)
 
         redaction_map: list[dict[str, Any]] = []
         masked: dict[str, str] = {}
@@ -182,7 +206,10 @@ class WorkflowRunner:
         for chan, (path, words, text, char_to_word) in channel_data.items():
             include_context = single_channel or chan != agent_channel  # agent channel bounded only if a customer channel exists
             try:
-                spans = redact.detect_spans(text, ner_hook=ner_hook, include_context=include_context)
+                spans = redact.detect_spans(
+                    text, number_words=lang.number_words, connector=lang.number_connector,
+                    lead_ins=lang.context_lead_ins, iban_prefix=lang.iban_prefix, egn=lang.egn,
+                    ner_hook=ner_hook, include_context=include_context)
                 ranges = redact.spans_to_time_ranges(spans, words, char_to_word, pad=pad)
                 masked_path = str(out_base / f"{chan}.masked.wav")
                 redact.mask_audio(path, masked_path, ranges)  # raises (→ HOLD) if ffmpeg fails
@@ -226,11 +253,17 @@ class WorkflowRunner:
         masked = (run.context.get("redaction") or {}).get("masked_channels") or {}
         if not masked:
             raise ValueError("transcription requires redaction masked_channels (run audio_redaction first)")
-        model_dir = (phase.config.get("transcription") or {}).get("stt_model_dir")
+        lang = getattr(run, "lang", None)
+        if lang is None:
+            run.status = "blocked"
+            run.context["transcription"] = {"held": True, "reason": "no language pack (pass inputs.profile)"}
+            phase_state.output = "held_for_review: no language pack"
+            return
+        model_dir = (phase.config.get("transcription") or {}).get("stt_model_dir") or lang.stt_model_dir
         channels_out: dict[str, Any] = {}
         text_parts: list[str] = []
         for chan, path in masked.items():
-            words, info = stt.transcribe_words(path, model_dir=model_dir) if model_dir else stt.transcribe_words(path)
+            words, info = stt.transcribe_words(path, language=lang.stt_language, model_dir=model_dir)
             text = "".join(w.get("word", "") for w in words).strip()
             channels_out[chan] = {"text": text, "words": words, "duration": info.get("duration")}
             text_parts.append(f"## CHANNEL {chan}\n{text}")
@@ -275,8 +308,15 @@ class WorkflowRunner:
         from cc_harness.phase_ledger import evaluator
 
         cfg = phase.config.get("call_path_classify") or {}
-        contract_path = str(cfg.get("contract_path") or "contracts/callcenter-newplan-esign.json")
-        contract = evaluator.load_contract(contract_path)
+        profile = getattr(run, "profile", None)
+        if profile is None:
+            run.status = "blocked"
+            run.context["classify"] = {"held": True, "reason": "no client profile (pass inputs.profile)"}
+            phase_state.output = "held_for_review: no client profile"
+            return
+        contract = evaluator.validate_contract(profile.contract)  # absorbed contract dict from the profile
+        # Channel-ID keywords stay on the contract's categories_detail for now (re-homing to the profile
+        # is a later slice); works unchanged for the A1 tenant.
         keywords = [k.lower() for d in contract["categories_detail"] for k in d.get("keywords", [])]
 
         channels = (run.context.get("transcription") or {}).get("channels") or {}
@@ -299,13 +339,12 @@ class WorkflowRunner:
         agent_channel = ranked[0][0]
         customer_channel = ranked[1][0] if len(ranked) > 1 else None
         classify = {
-            "call_path": str(cfg.get("call_path") or "newplan_esign"),
+            "call_path": str(cfg.get("call_path") or profile.call_path),
             "agent_channel": agent_channel,
             "customer_channel": customer_channel,
-            "contract_path": contract_path,
         }
         run.context["classify"] = classify
-        run.context["evaluation_contract_path"] = contract_path  # §0.7 context override
+        run.context["evaluation_contract"] = contract  # §0.7 override: the contract DICT (not a path)
         phase_state.output = json.dumps(classify)
 
     def _run_phase_ledger_phase(self, run: WorkflowRun, phase: WorkflowPhase, phase_state: PhaseState) -> None:
@@ -313,10 +352,14 @@ class WorkflowRunner:
         from cc_harness.phase_ledger import evaluator
 
         cfg = phase.config.get("phase_ledger") or {}
-        contract_path = run.context.get("evaluation_contract_path") or cfg.get("contract_path")
-        if not contract_path:
-            raise ValueError("phase_ledger requires a contract path (from classify override or config)")
-        contract = evaluator.load_contract(str(contract_path))
+        profile = getattr(run, "profile", None)
+        if profile is None:
+            run.status = "blocked"
+            run.context["evaluation"] = {"held": True, "reason": "no client profile (pass inputs.profile)"}
+            phase_state.output = "held_for_review: no client profile"
+            return
+        contract = evaluator.validate_contract(run.context.get("evaluation_contract") or profile.contract)
+        offer_category_id = profile.offer_category_id
 
         # Score the AGENT channel transcript for script adherence (the agent recites the script).
         classify = run.context.get("classify") or {}
@@ -343,7 +386,7 @@ class WorkflowRunner:
                 executor = CommandRoleExecutor.from_env()  # fail-closed if CC_HARNESS_AGENT_COMMAND unset
                 result = evaluator.evaluate_command(contract, source_text, "\n".join(prosody_lines), executor,
                                                     agent_words=agent_words, duration=duration,
-                                                    customer_text=customer_text)
+                                                    customer_text=customer_text, offer_category_id=offer_category_id)
             except Exception as exc:  # noqa: BLE001 - unconfigured/failed judge must HOLD, not fake a score
                 run.status = "blocked"
                 run.context["evaluation"] = {"held": True, "reason": f"command-mode judge: {exc}"}
@@ -359,7 +402,8 @@ class WorkflowRunner:
             return
 
         # Deterministic (default): keyword adherence + prosody-proxy intonation.
-        result = evaluator.evaluate(contract, source_text, agent_words=agent_words, duration=duration)
+        result = evaluator.evaluate(contract, source_text, agent_words=agent_words, duration=duration,
+                                    offer_category_id=offer_category_id)
         _pt = contract.get("prosody_thresholds") or {}  # optional; else evaluator defaults (T3: client-calibrated)
         intonation = evaluator.evaluate_prosody(
             prosody_lines, speaker=str(agent_channel),
