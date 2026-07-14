@@ -85,7 +85,7 @@
     "населено място",
     "организация"
   ],
-  "stt_model": "faster-whisper-small",
+  "stt_model": "faster-whisper-large-v3",
   "stt_language": "bg",
   "recognizers": {
     "egn": true,

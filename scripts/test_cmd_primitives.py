@@ -10,12 +10,15 @@ def ck(n, c):
     print(f"[{'PASS' if c else 'FAIL'}] {n}"); (c or sys.exit(1))
 
 def ctx(judge=None, text="от името на А1, приемате офертата", **kw):
-    base = {"source_text": text, "agent_words": None, "redaction_map": None, "mandated_regions": [],
+    # customer_text carries the CUSTOMER's words — deal_detect now requires the acceptance quote to appear here
+    base = {"source_text": text, "customer_text": "да, приемам офертата, съгласен съм",
+            "agent_words": None, "redaction_map": None, "mandated_regions": [],
             "duration": None, "channel": "left"}
     if judge is not None: base["judge"] = judge
     base.update(kw); return base
 
-DEAL = {"deal": {"happened": True, "consent": True, "refusal": False},
+# a deal now requires accept_quote (the customer's acceptance) that really appears in customer_text
+DEAL = {"deal": {"happened": True, "consent": True, "refusal": False, "accept_quote": "приемам офертата"},
         "path": {"is_titular": True, "decision_maker": True, "service": "fixed"},
         "checks": {"objection_match": {"met": True, "evidence": "приемате офертата"},
                    "objection_bad": {"met": True, "evidence": "not in the transcript at all"}},
@@ -27,7 +30,14 @@ NODEAL = {"deal": {"happened": False, "consent": False, "refusal": True},
 ck("deal_detect: deal→met", run_primitive("deal_detect", {}, ctx(DEAL))["status"] == "met")
 ck("deal_detect: refusal→not_met", run_primitive("deal_detect", {}, ctx(NODEAL))["status"] == "not_met")
 ck("deal_detect evidence carries outcome+consent",
-   run_primitive("deal_detect", {}, ctx(DEAL))["evidence"] == {"deal": "deal", "consent": True})
+   {k: run_primitive("deal_detect", {}, ctx(DEAL))["evidence"][k] for k in ("deal", "consent")}
+   == {"deal": "deal", "consent": True})
+# EVIDENCE-FORCED: happened=true but the acceptance quote is NOT in the customer transcript → no sale
+ck("deal_detect: happened but accept_quote absent from customer_text → no_deal (fail-closed)",
+   run_primitive("deal_detect", {}, ctx({"deal": {"happened": True, "accept_quote": "нещо което клиентът не е казал"}},
+                                        customer_text="не, благодаря, не ме интересува"))["status"] == "not_met")
+ck("deal_detect: happened but empty accept_quote → no_deal",
+   run_primitive("deal_detect", {}, ctx({"deal": {"happened": True, "accept_quote": ""}}))["status"] == "not_met")
 
 # path_select
 ck("path_select: titular", run_primitive("path_select", {}, ctx(DEAL))["evidence"]["path"] == "titular")
@@ -39,6 +49,18 @@ ck("path_select: missing is_titular → indeterminate (fail-closed)",
 # judge_check: met only if evidence quote is really in the source (NFR-5 quote-exactness)
 ck("judge_check met (quote in source)", run_primitive("judge_check", {"id": "objection_match"}, ctx(DEAL))["status"] == "met")
 ck("judge_check DOWNGRADED when evidence not in source", run_primitive("judge_check", {"id": "objection_bad"}, ctx(DEAL))["status"] == "not_met")
+
+# require_customer_quote: an effort/rebuttal only counts if it answers a REAL customer objection (quoted + present)
+REB = {"checks": {"oe": {"met": True, "evidence": "приемате офертата", "customer_evidence": "не, скъпо е"}}}
+ck("require_customer_quote met (agent counter + real customer objection quote)",
+   run_primitive("judge_check", {"id": "oe", "require_customer_quote": True},
+                 ctx(REB, customer_text="не, скъпо е за мен"))["status"] == "met")
+ck("require_customer_quote NOT met when customer_evidence absent from customer_text (rebuttal to nobody)",
+   run_primitive("judge_check", {"id": "oe", "require_customer_quote": True},
+                 ctx(REB, customer_text="да, чудесно, благодаря"))["status"] == "not_met")
+ck("require_customer_quote NOT met when no customer_evidence at all",
+   run_primitive("judge_check", {"id": "oe2", "require_customer_quote": True},
+                 ctx({"checks": {"oe2": {"met": True, "evidence": "приемате офертата"}}}))["status"] == "not_met")
 ck("judge_check min_score met", run_primitive("judge_check", {"id": "active_listening", "min_score": 0.5}, ctx({"checks": {"active_listening": {"score": 0.8}}}))["status"] == "met")
 ck("judge_check min_score not_met", run_primitive("judge_check", {"id": "active_listening", "min_score": 0.9}, ctx({"checks": {"active_listening": {"score": 0.8}}}))["status"] == "not_met")
 

@@ -230,14 +230,21 @@ def deal_detect(cfg: dict[str, Any], ctx: Ctx) -> Result:
     if not judge:
         return _r("indeterminate", reason="no judge (command mode required)")
     d = judge.get("deal") or {}
-    if d.get("happened"):
+    # Evidence-forced (NFR-5 applied to the OUTCOME): the agent recites a close on every call, so a judge
+    # that says happened=true is not trusted on its own — the sale must be backed by the CUSTOMER's own words
+    # of acceptance, and that quote must ACTUALLY appear in the customer transcript. No real acceptance quote
+    # → no sale, regardless of what the judge claimed.
+    accept = str(d.get("accept_quote", "") or "").strip()
+    customer = str(ctx.get("customer_text", "") or "")
+    accepted = bool(accept) and accept.lower() in customer.lower()
+    if d.get("happened") and accepted:
         outcome = "deal"
     elif d.get("refusal"):
         outcome = "refusal"
     else:
         outcome = "no_deal"
     status = "met" if outcome == "deal" else ("not_met" if outcome in ("no_deal", "refusal") else "indeterminate")
-    return _r(status, deal=outcome, consent=bool(d.get("consent")))
+    return _r(status, deal=outcome, consent=bool(d.get("consent")), accept_quote=accept if accepted else "")
 
 
 def path_select(cfg: dict[str, Any], ctx: Ctx) -> Result:
@@ -272,8 +279,18 @@ def judge_check(cfg: dict[str, Any], ctx: Ctx) -> Result:
     met = bool(verdict.get("met"))
     quote = str(verdict.get("evidence", "") or "")
     if met and quote and quote.lower() not in ctx.get("source_text", "").lower():
-        met = False  # a met verdict with an unquotable/fabricated evidence is downgraded (fail-closed)
-    return _r("met" if met else "not_met", evidence=quote, detail=verdict.get("detail"))
+        met = False  # a met verdict with an unquotable/fabricated agent evidence is downgraded (fail-closed)
+    if cfg.get("require_customer_quote"):
+        # The check only holds if it RESPONDS to a real customer utterance (e.g. an effort/rebuttal is only
+        # real if it answers an actual objection). Require a non-empty agent quote AND a customer_evidence
+        # quote that truly appears in the customer transcript — otherwise the agent's scripted line, which is
+        # present on every call, does not count. Kills the "agent recited a rebuttal to nobody" false-positive.
+        cust = str(ctx.get("customer_text", "") or "").lower()
+        cust_q = str(verdict.get("customer_evidence", "") or "").strip()
+        if met and (not quote.strip() or not cust_q or cust_q.lower() not in cust):
+            met = False
+    return _r("met" if met else "not_met", evidence=quote,
+              customer_evidence=verdict.get("customer_evidence"), detail=verdict.get("detail"))
 
 
 # ---- conditional wrapper --------------------------------------------------------------------------

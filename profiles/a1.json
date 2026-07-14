@@ -389,7 +389,8 @@
       "id": "objection_effort",
       "primitive": "judge_check",
       "tier": "soft",
-      "question": "Did the agent make a real effort to rebut the customer's objection and keep selling, rather than give up / close with 'дочуване'?"
+      "require_customer_quote": true,
+      "question": "Did the agent make a real effort to rebut the customer's objection and keep selling? Answer met=true ONLY if, after the customer pushed back or hesitated, the agent gave a concrete counter-argument (price/benefit/reassurance) and continued trying to close. If the agent accepted the refusal, went quiet, moved on, or wrapped up ('дочуване'/'приятен ден') without countering, answer met=false."
     },
     {
       "id": "active_listening",

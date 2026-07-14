@@ -23,30 +23,45 @@ def _between(text: str, start: str, end: str) -> str:
 
 contract_raw = _between(prompt, "PHASE CONTRACT:\n", "\n\nSOURCE REQUEST:").strip()
 source = _between(prompt, "SOURCE REQUEST:\n", "\n\nOUTPUT JSON SHAPE:").strip()
-# The rubric prompt's SOURCE REQUEST begins with "## TRANSCRIPT ...\n<agent text>"; grab the agent line
-agent_line = ""
-for seg in source.split("## "):
-    if seg.startswith("TRANSCRIPT"):
-        body = seg.split("\n", 1)[1] if "\n" in seg else ""
-        agent_line = body.split("\n\n", 1)[0].strip()
-        break
-agent_line = agent_line or source
+
+
+def _section(prefix: str) -> str:
+    """Grab the first paragraph under a '## <prefix> …' header of the SOURCE REQUEST."""
+    for seg in source.split("## "):
+        if seg.startswith(prefix):
+            body = seg.split("\n", 1)[1] if "\n" in seg else ""
+            return body.split("\n\n", 1)[0].strip()
+    return ""
+
+
+# Restructured rubric prompt: CUSTOMER CHANNEL first, then AGENT TRANSCRIPT (scripted recital).
+agent_line = _section("AGENT TRANSCRIPT") or source
+customer_line = _section("CUSTOMER CHANNEL")
 
 try:
     contract = json.loads(contract_raw) if contract_raw else {}
 except json.JSONDecodeError:
     contract = {}
-low = (agent_line or source).lower()
 
-if "checks" in contract:  # NEW rubric-driven judge shape (Slice 3)
-    quote = agent_line[:40]  # a real substring of SOURCE → passes the quote-exactness check
-    checks = {str(c.get("id")): {"met": True, "evidence": quote, "detail": "fixture met"}
+if "checks" in contract:  # NEW rubric-driven judge shape (Slice 3 + evidence-forced restructure)
+    quote = agent_line[:40]           # a real substring of the AGENT transcript (passes NFR-5)
+    cust_q = customer_line[:40]        # a real substring of the CUSTOMER channel
+    checks = {str(c.get("id")): {"met": True, "evidence": quote, "customer_evidence": cust_q,
+                                 "detail": "fixture met"}
               for c in contract.get("checks", [])}
-    # deterministic deal/path heuristics from the agent transcript
-    deal = any(w in low for w in ("приемате", "обобщ", "адрес", "изпратя документ"))
+    # Evidence-forced deal: accept_quote must be a REAL substring of the customer channel; only when the
+    # customer's words contain an acceptance cue does the fixture emit a (verbatim) acceptance quote.
+    accept = ""
+    cl = customer_line.lower()
+    for w in ("приемам", "приемате", "съгласен", "съгласна", "да, разбира"):
+        pos = cl.find(w)
+        if pos != -1:
+            accept = customer_line[pos:pos + 30].strip()
+            break
     print(json.dumps({
         "checks": checks,
-        "deal": {"happened": deal, "consent": deal, "refusal": False},
+        "deal": {"happened": bool(accept), "accept_quote": accept,
+                 "consent": bool(accept), "refusal": False},
         "path": {"is_titular": True, "decision_maker": True, "service": "fixed"},
         "emotion": {"score": 0.7}, "active_listening": {"score": 0.6},
         "objection": {"raised": False, "rebutted": False, "matched": False, "evidence": ""},

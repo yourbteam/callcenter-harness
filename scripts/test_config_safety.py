@@ -21,7 +21,7 @@ p = load_profile("profiles/a1.json")
 ck("valid a1 profile loads", isinstance(p, Profile) and p.client_key == "a1")
 lang = load_language("bg")
 ck("valid bg pack loads", isinstance(lang, Lang) and lang.iban_prefix == "BG")
-ck("stt_model resolved to a path (not a bare name)", lang.stt_model_dir.endswith("faster-whisper-small") and "/" in lang.stt_model_dir)
+ck("stt_model resolved to a path (not a bare name)", lang.stt_model_dir.endswith("faster-whisper-large-v3") and "/" in lang.stt_model_dir)
 
 # --- profile failures ---
 ck("missing profile file → ConfigError", raises(lambda: load_profile(str(tmp/"nope.json"))))
