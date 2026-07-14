@@ -32,10 +32,16 @@ RUBRIC_OUTPUT_JSON_SHAPE = {
                               "customer_evidence": "<exact quote from the CUSTOMER CHANNEL this check responds "
                                                    "to (e.g. the objection the agent is rebutting), or empty>",
                               "detail": "<short reason>"}},
-    "deal": {"happened": "true|false — true ONLY IF accept_quote below is non-empty (a real customer acceptance)",
+    "deal": {"happened": "true|false — true IF EITHER accept_quote OR delivery_quote below is non-empty",
              "accept_quote": "<the CUSTOMER's exact words agreeing to buy / proceed, copied VERBATIM from the "
-                             "CUSTOMER CHANNEL. Empty if the customer objected, stalled, said no, or only "
-                             "acknowledged/listened. A short call or a bare acknowledgement is NOT acceptance.>",
+                             "CUSTOMER CHANNEL. INCLUDES a hedged or late yes that follows earlier objections "
+                             "(e.g. 'well ok, since the price even drops, I agree'). Empty ONLY if the customer "
+                             "never agreed at all. A bare acknowledgement / just listening is NOT acceptance.>",
+             "delivery_quote": "<the CUSTOMER's exact words VOLUNTEERING contact or delivery details FOR the "
+                               "offer — a phone number to reach them, a delivery address, or a delivery "
+                               "instruction — copied VERBATIM from the CUSTOMER CHANNEL. A customer giving the "
+                               "courier/documents their details is proceeding = a close. Empty if none given, "
+                               "or if a number/address was only confirmed for identity, not for delivery.>",
              "consent": "true|false (explicit consent to proceed / take personal data)",
              "refusal": "true|false (customer declined the offer)"},
     "path": {"is_titular": "true|false (the interlocutor is the account holder)",
@@ -63,10 +69,14 @@ def judge_prompt_from_rubric(cmd_checks: list[dict[str, Any]], source_text: str,
         "CUSTOMER CHANNEL. Return ONLY the JSON object.",
         "",
         "DECISION RULES (evidence-forced — a claim with no verbatim quote is false):",
-        "- deal.happened = true ONLY IF you can copy the CUSTOMER's explicit words of AGREEMENT into",
-        "  deal.accept_quote, verbatim from the CUSTOMER CHANNEL. If the customer objected, stalled, said no,",
-        "  only acknowledged/listened, or the call is too short to contain an agreement → happened=false and",
-        "  accept_quote empty.",
+        "- Judge the FINAL state of the call, not the opening. Customers very often refuse first and come",
+        "  around later — an early 'no' that becomes a late or hedged 'yes', OR that ends with the customer",
+        "  GIVING their phone / address / delivery instructions for the offer, is a SALE.",
+        "- deal.happened = true IF EITHER: (a) you can copy the customer's words of AGREEMENT (even hedged or",
+        "  late, after earlier objections) into deal.accept_quote; OR (b) the customer VOLUNTEERS contact or",
+        "  delivery details for the offer — copy them into deal.delivery_quote. Both are verbatim from the",
+        "  CUSTOMER CHANNEL. If the customer only objected, stalled, said no, acknowledged/listened, or gave a",
+        "  number/address merely to confirm identity (not for delivery) → happened=false and both quotes empty.",
         "- For a CHECK about the agent rebutting / making an effort / not giving up: met=true ONLY IF the",
         "  CUSTOMER first raised an objection (copy it verbatim into that check's customer_evidence) AND the",
         "  agent then gave a substantive counter and kept selling (copy the agent counter into evidence). If",

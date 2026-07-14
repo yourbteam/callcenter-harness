@@ -60,7 +60,7 @@ if "checks" in contract:  # NEW rubric-driven judge shape (Slice 3 + evidence-fo
             break
     print(json.dumps({
         "checks": checks,
-        "deal": {"happened": bool(accept), "accept_quote": accept,
+        "deal": {"happened": bool(accept), "accept_quote": accept, "delivery_quote": "",
                  "consent": bool(accept), "refusal": False},
         "path": {"is_titular": True, "decision_maker": True, "service": "fixed"},
         "emotion": {"score": 0.7}, "active_listening": {"score": 0.6},

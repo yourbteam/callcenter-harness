@@ -378,7 +378,17 @@
     {
       "id": "deal",
       "primitive": "deal_detect",
-      "tier": "soft"
+      "tier": "soft",
+      "_delivery_detect_note": "Close signal: the customer gives a callback/delivery NUMBER near the end of the call. NUMBER categories only (an address mention is excluded — refusing customers also state addresses); final-fraction gate discriminates a real close (~89% in the labelled sale) from a mid-call number (~66% in a give-up). Tuned on one confirmed sale — widen the labelled set before trusting broadly.",
+      "delivery_detect": {
+        "channel": "customer",
+        "slot_categories": [
+          "PHONE_OR_ID",
+          "NUMERIC_RUN",
+          "MULTI"
+        ],
+        "min_fraction": 0.8
+      }
     },
     {
       "id": "path",

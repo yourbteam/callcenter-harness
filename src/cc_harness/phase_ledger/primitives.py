@@ -223,6 +223,39 @@ def slot_present(cfg: dict[str, Any], ctx: Ctx) -> Result:
 # mode ctx has no "judge" key → they return `indeterminate` (unchanged Slice-2 behavior). All use
 # ctx.get(...) — never subscript — so an absent key can't KeyError.
 
+def _delivery_after_close(cfg: dict[str, Any], ctx: Ctx) -> dict[str, Any] | None:
+    """DET-MAP close signal (independent of the AI judge, which is weak at hedged/late acceptances): did the
+    CUSTOMER volunteer contact/delivery PII AFTER the agent's close? A redaction-map slot of a delivery
+    category on the customer channel, at/after the address-request phrase, means the customer handed over
+    details for the courier/documents — i.e. they are proceeding = a close. Configured on the deal entry via
+    `delivery_detect` (absent → feature off, stays generic). The address-request STT can itself be garbled,
+    so when the anchor phrase isn't found we fall back to a late-call floor (`min_fraction` of duration) —
+    only delivery-time PII counts, never an early identity mention. Returns {category, at} on a hit else None."""
+    dd = cfg.get("delivery_detect")
+    if not isinstance(dd, dict):
+        return None
+    rmap = ctx.get("redaction_map")
+    cats = set(dd.get("slot_categories", []))
+    if not rmap or not cats:
+        return None
+    channel = _resolve_channel(dd.get("channel", "customer"), ctx)
+    if not channel:
+        return None
+    after = list(dd.get("after_phrase") or [])
+    anchor_words = ctx.get(str(dd.get("after_phrase_words", "agent_words"))) or []
+    t = _phrase_start_time(anchor_words, after) if after else None
+    if t is None:  # anchor phrase not found (garbled STT / agent gave up before the close) → late-call floor
+        dur = ctx.get("duration")
+        if not isinstance(dur, (int, float)) or dur <= 0:
+            return None
+        t = float(dd.get("min_fraction", 0.5)) * float(dur)
+    for s in rmap:
+        if (s.get("channel") == channel and str(s.get("category")) in cats
+                and float(s.get("start", 0.0)) >= t):
+            return {"category": s.get("category"), "at": [s.get("start"), s.get("end")]}
+    return None
+
+
 def deal_detect(cfg: dict[str, Any], ctx: Ctx) -> Result:
     """Resolve the call outcome from the judge verdict: deal / no_deal / refusal (+ consent). The rubric
     interpreter runs this FIRST and copies the outcome onto ctx for `conditional_on` to read."""
@@ -231,20 +264,29 @@ def deal_detect(cfg: dict[str, Any], ctx: Ctx) -> Result:
         return _r("indeterminate", reason="no judge (command mode required)")
     d = judge.get("deal") or {}
     # Evidence-forced (NFR-5 applied to the OUTCOME): the agent recites a close on every call, so a judge
-    # that says happened=true is not trusted on its own — the sale must be backed by the CUSTOMER's own words
-    # of acceptance, and that quote must ACTUALLY appear in the customer transcript. No real acceptance quote
-    # → no sale, regardless of what the judge claimed.
+    # that says happened=true is not trusted on its own — the sale must be backed by the CUSTOMER's OWN words
+    # that actually appear in the customer transcript. Two kinds of proof count (a call can turn around late):
+    #   accept_quote   — the customer agreeing (however hedged / late, after earlier objections)
+    #   delivery_quote — the customer volunteering contact/delivery details FOR the offer (proceeding = a close)
+    # No real supporting quote → no sale, regardless of what the judge claimed.
+    customer = str(ctx.get("customer_text", "") or "").lower()
     accept = str(d.get("accept_quote", "") or "").strip()
-    customer = str(ctx.get("customer_text", "") or "")
-    accepted = bool(accept) and accept.lower() in customer.lower()
-    if d.get("happened") and accepted:
+    delivery = str(d.get("delivery_quote", "") or "").strip()
+    accept_ok = bool(accept) and accept.lower() in customer
+    delivery_ok = bool(delivery) and delivery.lower() in customer
+    # DET-MAP override: the customer volunteering delivery PII after the close is objective proof of a sale,
+    # independent of the judge — this catches the turnaround sales the judge misses (Path A).
+    det = _delivery_after_close(cfg, ctx)
+    if (d.get("happened") and (accept_ok or delivery_ok)) or det:
         outcome = "deal"
     elif d.get("refusal"):
         outcome = "refusal"
     else:
         outcome = "no_deal"
     status = "met" if outcome == "deal" else ("not_met" if outcome in ("no_deal", "refusal") else "indeterminate")
-    return _r(status, deal=outcome, consent=bool(d.get("consent")), accept_quote=accept if accepted else "")
+    return _r(status, deal=outcome, consent=bool(d.get("consent")),
+              accept_quote=accept if accept_ok else "", delivery_quote=delivery if delivery_ok else "",
+              delivery_slot=det)
 
 
 def path_select(cfg: dict[str, Any], ctx: Ctx) -> Result:

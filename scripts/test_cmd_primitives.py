@@ -38,6 +38,45 @@ ck("deal_detect: happened but accept_quote absent from customer_text → no_deal
                                         customer_text="не, благодаря, не ме интересува"))["status"] == "not_met")
 ck("deal_detect: happened but empty accept_quote → no_deal",
    run_primitive("deal_detect", {}, ctx({"deal": {"happened": True, "accept_quote": ""}}))["status"] == "not_met")
+# TURNAROUND: a hedged/late acceptance still counts (accept_quote present in customer_text)
+ck("deal_detect: hedged late acceptance → met",
+   run_primitive("deal_detect", {}, ctx({"deal": {"happened": True, "accept_quote": "еми да, съгласна"}},
+       customer_text="не, не, не... еми да, съгласна, като цената пада"))["status"] == "met")
+# DELIVERY-DETAIL: customer volunteering contact/delivery details for the offer is a close (delivery_quote)
+ck("deal_detect: delivery_quote (phone/address given) → met",
+   run_primitive("deal_detect", {}, ctx({"deal": {"happened": True, "accept_quote": "", "delivery_quote": "0886 513 083"}},
+       customer_text="добре, телефонът ми е 0886 513 083, да не е в градината"))["status"] == "met")
+ck("deal_detect: delivery_quote NOT in customer_text → no_deal (fail-closed)",
+   run_primitive("deal_detect", {}, ctx({"deal": {"happened": True, "delivery_quote": "адрес който клиентът не е дал"}},
+       customer_text="не, благодаря, не ме интересува"))["status"] == "not_met")
+# give-up: no acceptance AND no delivery details → stays not_met even if judge claims happened
+ck("deal_detect: give-up (no accept, no delivery) → not_met",
+   run_primitive("deal_detect", {}, ctx({"deal": {"happened": True, "accept_quote": "", "delivery_quote": ""},
+       "refusal": True}, customer_text="не, не, дочуване"))["status"] == "not_met")
+
+# Path A — DET-MAP: the customer gives a callback/delivery NUMBER in the final ~20% of the call → sale,
+# even though the judge said refusal (the turnaround the judge can't catch). NUMBER categories only (an
+# address mention is excluded — refusing customers also state addresses); config on the deal entry (hollow).
+DCFG = {"delivery_detect": {"channel": "customer",
+                            "slot_categories": ["PHONE_OR_ID", "NUMERIC_RUN", "MULTI"], "min_fraction": 0.8}}
+LATE_NUM = [{"category": "MULTI", "channel": "right", "start": 180.0, "end": 186.0}]   # 90% of 200s
+MID_NUM = [{"category": "MULTI", "channel": "right", "start": 120.0, "end": 126.0}]    # 60% of 200s
+LATE_ADDR = [{"category": "CONTEXT_PII", "channel": "right", "start": 190.0, "end": 192.0}]  # 95%, address
+NODEAL_JUDGE = {"deal": {"happened": False, "refusal": True}}
+ck("delivery_detect: NUMBER in final 20% → deal met (judge missed the turnaround)",
+   run_primitive("deal_detect", DCFG, ctx(NODEAL_JUDGE, redaction_map=LATE_NUM, customer_channel="right",
+       duration=200.0))["status"] == "met")
+ck("delivery_detect: NUMBER mid-call (60%) → NOT a sale (only a late number counts)",
+   run_primitive("deal_detect", DCFG, ctx(NODEAL_JUDGE, redaction_map=MID_NUM, customer_channel="right",
+       duration=200.0))["status"] == "not_met")
+ck("delivery_detect: late ADDRESS mention (not a number) → NOT a sale (give-up noise excluded)",
+   run_primitive("deal_detect", DCFG, ctx(NODEAL_JUDGE, redaction_map=LATE_ADDR, customer_channel="right",
+       duration=200.0))["status"] == "not_met")
+ck("delivery_detect: no config → feature off (late number stays not_met)",
+   run_primitive("deal_detect", {}, ctx(NODEAL_JUDGE, redaction_map=LATE_NUM, customer_channel="right",
+       duration=200.0))["status"] == "not_met")
+ck("delivery_detect: mono / no redaction map → no false sale",
+   run_primitive("deal_detect", DCFG, ctx(NODEAL_JUDGE, customer_channel="right", duration=200.0))["status"] == "not_met")
 
 # path_select
 ck("path_select: titular", run_primitive("path_select", {}, ctx(DEAL))["evidence"]["path"] == "titular")
