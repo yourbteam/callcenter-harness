@@ -78,6 +78,22 @@ ck("delivery_detect: no config → feature off (late number stays not_met)",
 ck("delivery_detect: mono / no redaction map → no false sale",
    run_primitive("deal_detect", DCFG, ctx(NODEAL_JUDGE, customer_channel="right", duration=200.0))["status"] == "not_met")
 
+# Fix #2 — SOFT-CLOSE: the customer DIRECTS the delivery (place/time for the courier) in the closing portion
+# → sale, even though the judge reads refusal and no number is dictated.
+LCFG = {"delivery_detect": {"customer_phrases": ["на работа", "фирма"], "customer_min_fraction": 0.3}}
+ck("logistics: customer directs delivery late in the call → deal met",
+   run_primitive("deal_detect", LCFG, ctx(NODEAL_JUDGE,
+       customer_text="не, не, не искам нищо... добре, изпратете на работа, фирма е"))["status"] == "met")
+ck("logistics: early 'на работа' refusal-excuse (first 30%) → NOT counted",
+   run_primitive("deal_detect", LCFG, ctx(NODEAL_JUDGE,
+       customer_text="на работа съм, нямам време, не искам, благодаря, не, не, дочуване приятен ден"))["status"] == "not_met")
+ck("logistics: customer never directs delivery → not_met",
+   run_primitive("deal_detect", LCFG, ctx(NODEAL_JUDGE,
+       customer_text="не искам нищо, благодаря, дочуване"))["status"] == "not_met")
+ck("logistics: no config → feature off",
+   run_primitive("deal_detect", {}, ctx(NODEAL_JUDGE,
+       customer_text="добре, изпратете на работа, фирма е"))["status"] == "not_met")
+
 # path_select
 ck("path_select: titular", run_primitive("path_select", {}, ctx(DEAL))["evidence"]["path"] == "titular")
 ck("path_select: non_titular_no", run_primitive("path_select", {}, ctx(NODEAL))["evidence"]["path"] == "non_titular_no")
@@ -102,6 +118,16 @@ ck("require_customer_quote NOT met when no customer_evidence at all",
                  ctx({"checks": {"oe2": {"met": True, "evidence": "приемате офертата"}}}))["status"] == "not_met")
 ck("judge_check min_score met", run_primitive("judge_check", {"id": "active_listening", "min_score": 0.5}, ctx({"checks": {"active_listening": {"score": 0.8}}}))["status"] == "met")
 ck("judge_check min_score not_met", run_primitive("judge_check", {"id": "active_listening", "min_score": 0.9}, ctx({"checks": {"active_listening": {"score": 0.8}}}))["status"] == "not_met")
+# Fix #3: the judge returns emotion/active_listening scores at the TOP LEVEL (not under checks) — read there
+ck("judge_check min_score reads TOP-LEVEL score → met",
+   run_primitive("judge_check", {"id": "emotion", "min_score": 0.5}, ctx({"emotion": {"score": 0.7}}))["status"] == "met")
+ck("judge_check min_score TOP-LEVEL below threshold → not_met",
+   run_primitive("judge_check", {"id": "emotion", "min_score": 0.5}, ctx({"emotion": {"score": 0.2}}))["status"] == "not_met")
+# Fix #3 honesty: judge returned NO score → indeterminate (review), NOT a silent 0.0/not_met
+ck("judge_check min_score: judge omits the field → indeterminate (couldn't assess)",
+   run_primitive("judge_check", {"id": "emotion", "min_score": 0.5}, ctx({"checks": {}}))["status"] == "indeterminate")
+ck("judge_check min_score: field present but no score → indeterminate",
+   run_primitive("judge_check", {"id": "emotion", "min_score": 0.5}, ctx({"emotion": {}}))["status"] == "indeterminate")
 
 # conditional_on resolves against ctx set by deal_detect (via run_rubric resolver-first)
 rubric = [

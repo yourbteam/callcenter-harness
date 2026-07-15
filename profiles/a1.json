@@ -189,10 +189,12 @@
       "id": "identify_a1",
       "primitive": "phrase_present",
       "tier": "hard",
+      "_variants_note": "STT-calibrated: 'та едно' is how faster-whisper renders the A1 brand 'Моят А1' -> '...Та Едно'. NOTE: two common tokens — small false-pass risk on this HARD check; the more-specific 'моя та едно' was tried but STT renders 'моя' inconsistently and it false-NEGATIVES, so 'та едно' is the robust choice. Re-tune as more labelled calls arrive.",
       "phrases": [
         "А1",
         "А 1",
-        "от името"
+        "от името",
+        "та едно"
       ]
     },
     {
@@ -208,8 +210,11 @@
       "id": "discount_offer",
       "primitive": "phrase_present",
       "tier": "hard",
+      "_variants_note": "STT-calibrated: faster-whisper frequently drops the т ('отстъпка' -> 'остъпка'/'обстъпка').",
       "phrases": [
-        "отстъпк"
+        "отстъпк",
+        "остъпк",
+        "обстъпк"
       ]
     },
     {
@@ -387,7 +392,16 @@
           "NUMERIC_RUN",
           "MULTI"
         ],
-        "min_fraction": 0.8
+        "min_fraction": 0.8,
+        "_customer_phrases_note": "Fix #2 soft-close: the customer DIRECTS the delivery (a place/time for the courier) in the closing portion. Separates a grudging soft-close from a give-up; tuned on one confirmed sale, re-tunable.",
+        "customer_phrases": [
+          "на работа",
+          "фирма",
+          "от дома",
+          "часа тръгвам",
+          "може да ме открие"
+        ],
+        "customer_min_fraction": 0.3
       }
     },
     {

@@ -18,6 +18,7 @@ from typing import Any, Callable
 from cc_harness.phase_ledger.evaluator import (
     _find_quote, _first_offset, check_forbidden, first_seconds_engagement,
 )
+from cc_harness.phase_ledger.textmatch import best_status, classify
 
 Ctx = dict[str, Any]
 Result = dict[str, Any]
@@ -30,10 +31,17 @@ def _r(status: str, **evidence: Any) -> Result:
 # ---- DET primitives -------------------------------------------------------------------------------
 
 def phrase_present(cfg: dict[str, Any], ctx: Ctx) -> Result:
-    """met iff any configured phrase appears in the agent transcript (case-insensitive substring)."""
+    """met iff any configured phrase appears in the agent transcript. STT-robust (textmatch): a normalised
+    exact hit → met; a fuzzy NEAR hit (STT-corrupted) → indeterminate/review (never a silent met or miss);
+    otherwise not_met."""
     phrases = [str(p) for p in cfg.get("phrases", [])]
-    quote = _find_quote(ctx["source_text"], phrases)
-    return _r("met", quote=quote) if quote is not None else _r("not_met", phrases=phrases)
+    st = best_status(ctx["source_text"], phrases)
+    if st == "exact":
+        return _r("met", quote=_find_quote(ctx["source_text"], phrases))
+    if st == "near":
+        return _r("indeterminate", reason="phrase near-match (likely STT-corrupted) — needs review",
+                  phrases=phrases)
+    return _r("not_met", phrases=phrases)
 
 
 def phrase_ordering(cfg: dict[str, Any], ctx: Ctx) -> Result:
@@ -92,9 +100,17 @@ def word_avoid(cfg: dict[str, Any], ctx: Ctx) -> Result:
 
 
 def forbidden_phrase(cfg: dict[str, Any], ctx: Ctx) -> Result:
-    """HARD: configured phrases must NOT appear (surfaces check_forbidden as a rubric primitive)."""
-    hits = check_forbidden(ctx["source_text"], [str(p) for p in cfg.get("phrases", [])])["forbidden_hits"]
-    return _r("not_met", hits=hits) if hits else _r("met")
+    """HARD: configured phrases must NOT appear. STT-robust: a normalised exact hit → not_met (violation);
+    a fuzzy NEAR hit → indeterminate/review (a possible forbidden word, human confirms — never silently
+    cleared or convicted); clean → met."""
+    phrases = [str(p) for p in cfg.get("phrases", [])]
+    hits = check_forbidden(ctx["source_text"], phrases)["forbidden_hits"]
+    if hits:
+        return _r("not_met", hits=hits)
+    if best_status(ctx["source_text"], phrases) == "near":
+        return _r("indeterminate", reason="possible forbidden phrase (near-match) — needs review",
+                  phrases=phrases)
+    return _r("met")
 
 
 def opening_density(cfg: dict[str, Any], ctx: Ctx) -> Result:
@@ -256,6 +272,29 @@ def _delivery_after_close(cfg: dict[str, Any], ctx: Ctx) -> dict[str, Any] | Non
     return None
 
 
+def _customer_logistics_close(cfg: dict[str, Any], ctx: Ctx) -> dict[str, Any] | None:
+    """DET close signal for a SOFT-close sale (Fix #2): the CUSTOMER volunteers delivery LOGISTICS — a
+    place/time for the courier ('to my work', 'it's a company', 'by 2 o'clock') — in the closing portion of
+    the call. A refusing customer never directs the delivery, so this separates a grudging soft-close from a
+    give-up even when the customer never dictates a phone number (which the redaction-map signal needs) and
+    verbally keeps saying no (which the judge reads as refusal). STT-robust phrase match (textmatch); the
+    position gate (`customer_min_fraction` of the customer transcript) drops an early refusal excuse like
+    'I'm at work, no time'. Configured on the deal entry via `delivery_detect.customer_phrases`."""
+    dd = cfg.get("delivery_detect")
+    if not isinstance(dd, dict):
+        return None
+    phrases = [str(p) for p in dd.get("customer_phrases", [])]
+    ct = str(ctx.get("customer_text", "") or "")
+    if not phrases or not ct:
+        return None
+    cut = int(len(ct) * float(dd.get("customer_min_fraction", 0.3)))
+    tail = ct[cut:]
+    for p in phrases:
+        if classify(tail, p) == "exact":
+            return {"phrase": p}
+    return None
+
+
 def deal_detect(cfg: dict[str, Any], ctx: Ctx) -> Result:
     """Resolve the call outcome from the judge verdict: deal / no_deal / refusal (+ consent). The rubric
     interpreter runs this FIRST and copies the outcome onto ctx for `conditional_on` to read."""
@@ -274,10 +313,12 @@ def deal_detect(cfg: dict[str, Any], ctx: Ctx) -> Result:
     delivery = str(d.get("delivery_quote", "") or "").strip()
     accept_ok = bool(accept) and accept.lower() in customer
     delivery_ok = bool(delivery) and delivery.lower() in customer
-    # DET-MAP override: the customer volunteering delivery PII after the close is objective proof of a sale,
-    # independent of the judge — this catches the turnaround sales the judge misses (Path A).
+    # DET overrides, independent of the judge — catch the closes the judge misses:
+    #   det        (Path A): the customer volunteers a delivery NUMBER after the close (redaction-map slot).
+    #   logistics  (Fix #2): the customer directs the delivery — a place/time for the courier — in the close.
     det = _delivery_after_close(cfg, ctx)
-    if (d.get("happened") and (accept_ok or delivery_ok)) or det:
+    logistics = _customer_logistics_close(cfg, ctx)
+    if (d.get("happened") and (accept_ok or delivery_ok)) or det or logistics:
         outcome = "deal"
     elif d.get("refusal"):
         outcome = "refusal"
@@ -286,7 +327,7 @@ def deal_detect(cfg: dict[str, Any], ctx: Ctx) -> Result:
     status = "met" if outcome == "deal" else ("not_met" if outcome in ("no_deal", "refusal") else "indeterminate")
     return _r(status, deal=outcome, consent=bool(d.get("consent")),
               accept_quote=accept if accept_ok else "", delivery_quote=delivery if delivery_ok else "",
-              delivery_slot=det)
+              delivery_slot=det, logistics=logistics)
 
 
 def path_select(cfg: dict[str, Any], ctx: Ctx) -> Result:
@@ -314,9 +355,21 @@ def judge_check(cfg: dict[str, Any], ctx: Ctx) -> Result:
     judge = ctx.get("judge")
     if not judge:
         return _r("indeterminate", reason="no judge (command mode required)")
-    verdict = (judge.get("checks") or {}).get(str(cfg.get("id"))) or {}
+    cid = str(cfg.get("id"))
+    verdict = (judge.get("checks") or {}).get(cid) or {}
     if "min_score" in cfg:  # scored field (e.g. active_listening/emotion)
-        score = float(verdict.get("score", 0.0))
+        # These are returned by the judge at the TOP LEVEL (judge["emotion"], judge["active_listening"]),
+        # NOT under judge["checks"]. Read there, falling back to a checks entry. If the judge returned NO
+        # usable score, resolve to indeterminate → review ("couldn't assess") — NOT a silent 0.0/not_met
+        # (absent != zero; a missing judgment must not read as a failed one).
+        scored = judge.get(cid) if isinstance(judge.get(cid), dict) else verdict
+        raw = scored.get("score")
+        if raw is None:
+            return _r("indeterminate", reason="judge returned no score for this check — couldn't assess")
+        try:
+            score = float(raw)
+        except (TypeError, ValueError):
+            return _r("indeterminate", reason=f"judge score not numeric ({raw!r}) — couldn't assess")
         return _r("met" if score >= float(cfg["min_score"]) else "not_met", score=score)
     met = bool(verdict.get("met"))
     quote = str(verdict.get("evidence", "") or "")
