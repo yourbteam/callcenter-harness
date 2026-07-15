@@ -20,6 +20,21 @@ from cc_harness.state.store import PhaseState, WorkflowRun, WorkflowStateStore
 TERMINAL_STATUSES = {"skipped", "blocked"}
 
 
+def _stt_prompt(lang: Any, profile: Any) -> str | None:
+    """Concatenate locale (language pack) + client/brand (profile) STT priming PROSE into initial_prompt.
+
+    Fed to faster-whisper's initial_prompt to improve fidelity on low-quality telephony audio. MUST be
+    natural prose (a plausible transcript sentence) — a bare keyword list makes Whisper echo the terms back
+    as output (verified: term lists caused prompt-echo + a >5x slowdown). Returns None when neither config
+    supplies prose (no behaviour change). The prose comes only from config — no literals here — so the
+    engine stays hollow.
+    """
+    parts = [str(getattr(lang, "stt_prompt", "") or "").strip(),
+             str(getattr(profile, "stt_prompt", "") or "").strip()]
+    joined = " ".join(p for p in parts if p)
+    return joined or None
+
+
 class WorkflowRunner:
     def __init__(self, store: WorkflowStateStore | None = None, *,
                  default_max_attempts: int = 1, retry_backoff_seconds: float = 0.0):
@@ -168,6 +183,10 @@ class WorkflowRunner:
         if profile is None or lang is None:
             return hold("no client profile / language pack (pass inputs.profile)")
         model_dir = cfg.get("stt_model_dir") or lang.stt_model_dir
+        # NOTE: redaction STT is intentionally UNPRIMED. Its transcript is ephemeral (only to LOCATE PII and
+        # pick the agent channel) and its mean-word-probability drives a fail-closed PII-safety gate; domain
+        # priming doesn't help PII location and must not perturb that gate. Priming is applied only to the
+        # eval transcript in the transcription phase.
 
         # Fail-closed: NER required but not vendored → HOLD, don't under-detect (NFR-6/FR-2.3).
         ner_hook = None
@@ -259,11 +278,14 @@ class WorkflowRunner:
             run.context["transcription"] = {"held": True, "reason": "no language pack (pass inputs.profile)"}
             phase_state.output = "held_for_review: no language pack"
             return
+        profile = getattr(run, "profile", None)
         model_dir = (phase.config.get("transcription") or {}).get("stt_model_dir") or lang.stt_model_dir
+        prompt = _stt_prompt(lang, profile)  # prose brand+telco priming for the EVAL transcript (config-sourced)
         channels_out: dict[str, Any] = {}
         text_parts: list[str] = []
         for chan, path in masked.items():
-            words, info = stt.transcribe_words(path, language=lang.stt_language, model_dir=model_dir)
+            words, info = stt.transcribe_words(path, language=lang.stt_language, model_dir=model_dir,
+                                               initial_prompt=prompt)
             text = "".join(w.get("word", "") for w in words).strip()
             channels_out[chan] = {"text": text, "words": words, "duration": info.get("duration")}
             text_parts.append(f"## CHANNEL {chan}\n{text}")

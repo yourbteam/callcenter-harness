@@ -18,16 +18,26 @@ DEFAULT_MODEL = Path(os.path.expanduser("~/.callcenter-harness/models/faster-whi
 
 
 def transcribe_words(
-    audio_path: str, language: str = "bg", model_dir: str | None = None, compute_type: str = "int8"
+    audio_path: str, language: str = "bg", model_dir: str | None = None, compute_type: str = "int8",
+    initial_prompt: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Return (words, info). words: [{start,end,word,probability}] flattened across segments."""
+    """Return (words, info). words: [{start,end,word,probability}] flattened across segments.
+
+    `initial_prompt` is NATURAL PROSE (a plausible transcript sentence naming brand/domain terms) that seeds
+    the decoder's early windows to improve fidelity on low-quality telephony audio. Defaults None (no change).
+    It must be prose, NOT a keyword list — faster-whisper echoes bare term lists back as output (verified). The
+    prose never lives here (engine stays hollow); it is passed in from the language pack + client profile.
+    (`hotwords` is intentionally NOT exposed: it takes keyword lists, which trigger the same echo pathology.)
+    """
     md = Path(model_dir or DEFAULT_MODEL)
     if not md.is_dir():
         raise FileNotFoundError(f"STT model not vendored: {md} (run the air-gapped STT provision)")
     from faster_whisper import WhisperModel
 
     model = WhisperModel(str(md), device="cpu", compute_type=compute_type)
-    segments, info = model.transcribe(audio_path, language=language, word_timestamps=True, vad_filter=True)
+    segments, info = model.transcribe(
+        audio_path, language=language, word_timestamps=True, vad_filter=True,
+        initial_prompt=initial_prompt or None)
     words: list[dict[str, Any]] = []
     probs: list[float] = []
     for seg in segments:

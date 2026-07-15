@@ -41,6 +41,10 @@ class Profile:
     call_paths: list[dict[str, Any]] = field(default_factory=list)
     service_branches: dict[str, Any] = field(default_factory=dict)
     legal_variants: list[dict[str, Any]] = field(default_factory=list)
+    # Client/brand STT priming as NATURAL PROSE (a plausible transcript sentence naming the brand/products)
+    # fed to faster-whisper initial_prompt. Must be prose, NOT a keyword list — Whisper echoes bare term
+    # lists back as output. Optional.
+    stt_prompt: str = ""
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,9 @@ class Lang:
     stt_language: str
     egn: bool
     iban_prefix: str
+    # Generic locale/domain STT priming as NATURAL PROSE (telco-call sentence) for faster-whisper
+    # initial_prompt. Prose, NOT a keyword list (Whisper echoes bare lists). Optional.
+    stt_prompt: str = ""
 
 
 def _read_json(path: Path, what: str) -> dict[str, Any]:
@@ -75,6 +82,18 @@ def _require(data: dict[str, Any], keys: tuple[str, ...], what: str) -> None:
     ver = data.get("schema_version")
     if ver != SUPPORTED_SCHEMA:
         raise ConfigError(f"{what} unsupported schema_version {ver!r} (engine supports {SUPPORTED_SCHEMA})")
+
+
+def _stt_prompt_str(data: dict[str, Any], what: str) -> str:
+    """Read optional `stt_prompt`, fail-closed if present but not a string. It must be PROSE — a list/number
+    coerced via str() would feed a bracketed keyword-list to Whisper and revive the prompt-echo bug."""
+    val = data.get("stt_prompt")
+    if val is None:
+        return ""
+    if not isinstance(val, str):
+        raise ConfigError(f"{what}: `stt_prompt` must be a prose string, not {type(val).__name__} "
+                          "(a keyword list makes STT echo the terms back)")
+    return val
 
 
 def load_profile(path: str) -> Profile:
@@ -102,6 +121,7 @@ def load_profile(path: str) -> Profile:
         call_paths=list(data.get("call_paths") or []),
         service_branches=dict(data.get("service_branches") or {}),
         legal_variants=list(data.get("legal_variants") or []),
+        stt_prompt=_stt_prompt_str(data, "profile"),
     )
 
 
@@ -123,4 +143,5 @@ def load_language(key: str, languages_dir: str = "languages", models_root: Path 
         stt_language=str(data["stt_language"]),
         egn=bool(rec["egn"]),
         iban_prefix=str(rec["iban_prefix"]),
+        stt_prompt=_stt_prompt_str(data, f"language pack '{key}'"),
     )

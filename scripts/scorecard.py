@@ -63,9 +63,16 @@ def build_report(rec: str, sink) -> None:
     if ctx.get("error"):
         out(f"phase error (run.context['error']) = {ctx['error']}")
     for pid, ps in (run.phases or {}).items():
-        if getattr(ps, "status", None) == "failed" or (getattr(ps, "output", "") or "").startswith("non_conversation"):
-            out(f"phase '{pid}': status={getattr(ps, 'status', '?')} output={getattr(ps, 'output', '')!r} "
+        outp = getattr(ps, "output", "") or ""
+        if getattr(ps, "status", None) == "failed" or outp.startswith(("non_conversation", "held_for_review")):
+            out(f"phase '{pid}': status={getattr(ps, 'status', '?')} output={outp!r} "
                 f"error={getattr(ps, 'error', None)!r}")
+    # A blocked run HOLDs in some phase (config/redaction/transcription/classify/...) — surface the exact
+    # hold reason from ANY ctx entry that recorded held=True (was invisible before).
+    for key, block in ctx.items():
+        if isinstance(block, dict) and block.get("held"):
+            extra = {k: v for k, v in block.items() if k not in ("held", "reason") and not isinstance(v, (list, dict))}
+            out(f"HELD in {key}: reason={block.get('reason')!r}" + (f" {extra}" if extra else ""))
     ingest = ctx.get("ingest") or {}
     if ingest.get("skipped"):
         out(f"SKIPPED by non-conversation gate: reason={ingest.get('reason')!r} "

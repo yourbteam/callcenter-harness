@@ -503,5 +503,7 @@
       "offer_type": "resign_new_service",
       "device": null
     }
-  ]
+  ],
+  "_stt_prompt_note": "A1-specific brand/product PROSE appended to the language pack's generic telco prose and fed to faster-whisper initial_prompt, to bias transcription. MUST be a natural sentence, NOT a keyword list (a bare list makes Whisper echo the names back — verified). This is the CORRECT boundary for the identify_a1 fidelity gap (fix the transcript, not add garbled aliases to the rubric). Note: the spoken brand 'Моят А1' (= 'Моят А-едно') still garbles at the very call opening on 8kHz even with priming; priming most helps the device/package/domain terms. Re-tune as more labelled calls arrive.",
+  "stt_prompt": "Операторът се обажда от името на Моят А1 и предлага слушалки Huawei FreeBuds и Huawei Band смарт гривна, както и телевизионните пакети HBO Max, Netflix, Diema, VOYO и Max Sport."
 }
