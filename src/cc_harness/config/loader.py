@@ -45,6 +45,9 @@ class Profile:
     # fed to faster-whisper initial_prompt. Must be prose, NOT a keyword list — Whisper echoes bare term
     # lists back as output. Optional.
     stt_prompt: str = ""
+    # Human-scorecard presentation: per-criterion BG labels, section grouping, coaching templates. Optional
+    # (absent → renderer falls back to raw criterion ids).
+    scorecard_presentation: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,8 @@ class Lang:
     # Generic locale/domain STT priming as NATURAL PROSE (telco-call sentence) for faster-whisper
     # initial_prompt. Prose, NOT a keyword list (Whisper echoes bare lists). Optional.
     stt_prompt: str = ""
+    # BG status words/icons + report chrome for the human-scorecard renderer. Optional (absent → ASCII fallback).
+    status_labels: dict[str, Any] = field(default_factory=dict)
 
 
 def _read_json(path: Path, what: str) -> dict[str, Any]:
@@ -96,6 +101,16 @@ def _stt_prompt_str(data: dict[str, Any], what: str) -> str:
     return val
 
 
+def _opt_dict(data: dict[str, Any], key: str, what: str) -> dict[str, Any]:
+    """Read an optional object-valued config key, fail-closed if present but not a JSON object."""
+    val = data.get(key)
+    if val is None:
+        return {}
+    if not isinstance(val, dict):
+        raise ConfigError(f"{what}: `{key}` must be a JSON object, not {type(val).__name__}")
+    return val
+
+
 def load_profile(path: str) -> Profile:
     data = _read_json(Path(path), "profile")
     _require(data, PROFILE_REQUIRED, "profile")
@@ -122,6 +137,7 @@ def load_profile(path: str) -> Profile:
         service_branches=dict(data.get("service_branches") or {}),
         legal_variants=list(data.get("legal_variants") or []),
         stt_prompt=_stt_prompt_str(data, "profile"),
+        scorecard_presentation=_opt_dict(data, "scorecard_presentation", "profile"),
     )
 
 
@@ -144,4 +160,5 @@ def load_language(key: str, languages_dir: str = "languages", models_root: Path 
         egn=bool(rec["egn"]),
         iban_prefix=str(rec["iban_prefix"]),
         stt_prompt=_stt_prompt_str(data, f"language pack '{key}'"),
+        status_labels=_opt_dict(data, "status_labels", f"language pack '{key}'"),
     )

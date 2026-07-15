@@ -442,6 +442,53 @@
         "друг тарифен план",
         "трета оферта"
       ]
+    },
+    {
+      "id": "ask_for_decision",
+      "primitive": "phrase_present",
+      "tier": "soft",
+      "_note": "Surfaces the client-watched «не искат решение» (FirstWorkflow.md:17). Phrases seeded from the contract's ask_for_decision_phrases + CallScript closing asks. Excludes courier-address prompts like «на кой адрес» (that is address capture, not a decision ask — would false-pass). CALIBRATION-PENDING — tune on labelled calls.",
+      "phrases": [
+        "да запишем",
+        "да продължим",
+        "съгласни ли сте",
+        "потвърждавате",
+        "да активираме",
+        "нека го направим",
+        "желаете ли да се възползвате"
+      ]
+    },
+    {
+      "id": "praise_benefits",
+      "primitive": "phrase_present",
+      "tier": "soft",
+      "_note": "Surfaces «не хвалят / не дават практически ползи» (FirstWorkflow.md:17). Phrases seeded from the CallScript benefit language. Excludes near-universal words like «безплатно»/«на разположение» (appear on nearly every call → false-pass). CALIBRATION-PENDING — tune on labelled calls.",
+      "phrases": [
+        "по-бърз интернет",
+        "повече канали",
+        "спестявате",
+        "богат избор",
+        "по-добро качество",
+        "по-добър сигнал",
+        "по-висока скорост"
+      ]
+    },
+    {
+      "id": "titular_check",
+      "primitive": "phrase_present",
+      "tier": "hard",
+      "applies_to_paths": [
+        "non_titular_yes",
+        "non_titular_no"
+      ],
+      "_note": "Non-titular gating question (m3-calibration-spec §1): the agent must verify who makes the decision when speaking to someone other than the account holder. HARD on non-titular paths, na on titular. CALIBRATION-PENDING.",
+      "phrases": [
+        "вземате решение",
+        "Вие ли сте титуляр",
+        "титуляр ли сте",
+        "кой взема решение",
+        "разговарям с титуляра"
+      ]
     }
   ],
   "call_paths": [
@@ -505,5 +552,51 @@
     }
   ],
   "_stt_prompt_note": "A1-specific brand/product PROSE appended to the language pack's generic telco prose and fed to faster-whisper initial_prompt, to bias transcription. MUST be a natural sentence, NOT a keyword list (a bare list makes Whisper echo the names back — verified). This is the CORRECT boundary for the identify_a1 fidelity gap (fix the transcript, not add garbled aliases to the rubric). Note: the spoken brand 'Моят А1' (= 'Моят А-едно') still garbles at the very call opening on 8kHz even with priming; priming most helps the device/package/domain terms. Re-tune as more labelled calls arrive.",
-  "stt_prompt": "Операторът се обажда от името на Моят А1 и предлага слушалки Huawei FreeBuds и Huawei Band смарт гривна, както и телевизионните пакети HBO Max, Netflix, Diema, VOYO и Max Sport."
+  "stt_prompt": "Операторът се обажда от името на Моят А1 и предлага слушалки Huawei FreeBuds и Huawei Band смарт гривна, както и телевизионните пакети HBO Max, Netflix, Diema, VOYO и Max Sport.",
+  "_scorecard_presentation_note": "Human-readable labels/grouping for the team-leader scorecard (src/cc_harness/report). Labels are honesty-corrected per docs/research/scorecard-human-structure-research.md §5 — they state the mandatory element; ✅/❌ come from automated proxy checks. Client/BG text lives here (config), keeping src/ hollow.",
+  "scorecard_presentation": {
+    "tone_criterion": "emotion",
+    "listening_criteria": ["active_listening", "objection_effort"],
+    "sections": [
+      {"id": "nachalo", "title": "Начало и съгласие", "order": 1},
+      {"id": "oferta1", "title": "Оферта 1", "order": 2},
+      {"id": "cena", "title": "Цена", "order": 3},
+      {"id": "zakonova", "title": "Законова част", "order": 4},
+      {"id": "priklyuchvane", "title": "Приключване", "order": 5},
+      {"id": "intonatsiya", "title": "Интонация и емоция", "order": 6},
+      {"id": "slushane", "title": "Активно слушане и възражения", "order": 7},
+      {"id": "ezik", "title": "Език", "order": 8}
+    ],
+    "criteria": {
+      "identify_a1": {"label": "Представи се от името на А1", "section": "nachalo", "proxy_note": "по ключова дума"},
+      "record_consent": {"label": "Уведоми, че разговорът се записва", "section": "nachalo"},
+      "consent_before_offer": {"label": "Съгласие за запис преди офертата", "section": "nachalo"},
+      "name_said": {"label": "Име, споменато в първите 20 сек", "section": "nachalo"},
+      "no_start_with_offer2": {"label": "Спазен ред на офертите (не започва с Оферта 2)", "section": "oferta1"},
+      "discount_offer": {"label": "Предложи отстъпка от месечната такса", "section": "oferta1"},
+      "speed_channels": {"label": "Представи скорост и канали", "section": "oferta1"},
+      "device_bonus": {"label": "Спомена бонус устройство (слушалки/гривна)", "section": "oferta1"},
+      "praise_benefits": {"label": "Изтъкна практически ползи", "section": "oferta1"},
+      "price_structure": {"label": "Обяви крайни цени", "section": "cena"},
+      "right_of_withdrawal": {"label": "Прочете правото на отказ (14 дни)", "section": "zakonova"},
+      "legal_read_on_deal": {"label": "Прочете законовата част при сделка", "section": "zakonova", "proxy_note": "по ключова дума — не потвърждава дословно четене"},
+      "courier_capture": {"label": "Взе данни за куриер (адрес/телефон)", "section": "zakonova"},
+      "final_summary": {"label": "Направи задължителното обобщение", "section": "priklyuchvane"},
+      "polite_close": {"label": "Учтиво приключване и благодарност", "section": "priklyuchvane"},
+      "emotion": {"label": "Уверен и емоционален тон (не вял)", "section": "intonatsiya"},
+      "opening_density": {"label": "Задържа клиента в първите секунди", "section": "intonatsiya"},
+      "active_listening": {"label": "Активно слушане", "section": "slushane"},
+      "objection_effort": {"label": "Оборване на възражения / не се предаде", "section": "slushane"},
+      "ask_for_decision": {"label": "Поиска решение от клиента", "section": "slushane"},
+      "titular_check": {"label": "Провери кой взема решение (при друго лице)", "section": "nachalo"},
+      "prefer_words": {"label": "Използва предпочитани изрази", "section": "ezik"},
+      "avoid_words": {"label": "Избягва забранени думи", "section": "ezik"}
+    },
+    "coaching": {
+      "has_violations": "Пропуснати задължителни елементи: {items}. Това са нарушения на скрипта.",
+      "weak_listening": "Основната зона за подобрение е активното слушане и оборването на възражения — агентът говори по скрипта, но не реагира достатъчно на репликите на клиента.",
+      "sale": "Разговорът завършва (вероятно) със сделка.",
+      "no_sale": "Разговорът не завършва със сделка — обърнете внимание на оборването на възраженията."
+    }
+  }
 }

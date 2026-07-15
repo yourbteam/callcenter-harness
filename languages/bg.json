@@ -92,5 +92,30 @@
     "iban_prefix": "BG"
   },
   "_stt_prompt_note": "Generic BG telco-call PROSE fed to faster-whisper initial_prompt to bias transcription on low-quality 8kHz audio (terms like 'отстъпка'/'Bluetooth слушалки' garble without priming). MUST be a natural sentence, NOT a keyword list — a bare list makes Whisper echo the terms back as output (verified: term lists caused prompt-echo + >5x slowdown; this prose gave clean output, conf 0.78, no slowdown). Locale/domain only — brand names live in the client profile. Re-tune as more labelled calls arrive.",
-  "stt_prompt": "Това е телефонен разговор от кол център. Операторът предлага оферта с отстъпка от месечната такса, по-висока интернет скорост и повече телевизионни канали, слушалки, рутер, приложение и доставка с куриер, договор с право на отказ."
+  "stt_prompt": "Това е телефонен разговор от кол център. Операторът предлага оферта с отстъпка от месечната такса, по-висока интернет скорост и повече телевизионни канали, слушалки, рутер, приложение и доставка с куриер, договор с право на отказ.",
+  "_status_labels_note": "Bulgarian status words/icons + report chrome for the human scorecard renderer (src/cc_harness/report). Locale-generic; client-specific labels live in the profile's scorecard_presentation. Keeps src/ hollow.",
+  "status_labels": {
+    "met": {"icon": "✅", "word": "Изпълнено"},
+    "violation": {"icon": "❌", "word": "Нарушение"},
+    "review": {"icon": "🔍", "word": "За преглед"},
+    "na": {"icon": "➖", "word": "Неприложимо"},
+    "advisory": {"icon": "⚠️", "word": "Препоръка"},
+    "disposition": {"evaluated": "Оценен", "held": "Задържан за преглед", "skipped": "Пропуснато обаждане"},
+    "ui": {
+      "call": "РАЗГОВОР",
+      "type": "Тип",
+      "state": "Състояние",
+      "result": "РЕЗУЛТАТ",
+      "sale": "СДЕЛКА",
+      "no_sale": "Няма сделка",
+      "deal_icon": "🟢",
+      "no_deal_icon": "⚪",
+      "summary": "Обобщение",
+      "mandatory": "Задължителни",
+      "violations_word": "нарушения",
+      "review_word": "за преглед",
+      "advisories_word": "Препоръки",
+      "coaching_title": "Какво се обърка"
+    }
+  }
 }

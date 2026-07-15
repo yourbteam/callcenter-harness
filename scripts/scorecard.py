@@ -28,11 +28,13 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 
-def build_report(rec: str, sink) -> None:
+def build_report(rec: str, sink, verbose: bool = False) -> None:
     """Run command mode and STREAM a complete, never-blank scorecard to `sink`.
 
-    `sink` is a callable writing one flushed line to the output file (see main). Every line is on disk the
-    instant it is produced, so a SIGKILL leaves a partial file rather than nothing.
+    Default output is the HUMAN-READABLE scorecard (report-model + text renderer, labels from config). Pass
+    verbose=True to also emit the raw per-criterion checklist for calibration/debug (decision D2). `sink` is
+    a callable writing one flushed line to the output file (see main). Every line is on disk the instant it
+    is produced, so a SIGKILL leaves a partial file rather than nothing.
     """
     out = sink
 
@@ -86,20 +88,34 @@ def build_report(rec: str, sink) -> None:
     if ev.get("held"):
         out(f"HELD: {ev.get('reason')}")
 
+    # --- HUMAN-READABLE SCORECARD (default) — report-model + text renderer, all labels from config ---
+    try:
+        from cc_harness.config.loader import load_profile, load_language
+        from cc_harness.report import build_report_model, render_text
+        prof = load_profile("profiles/a1.json")
+        lang = load_language(prof.language)
+        model = build_report_model(ctx, run.status, prof.scorecard_presentation, lang.status_labels,
+                                   call_id=Path(rec).name)
+        out("")
+        out(render_text(model, lang.status_labels))
+    except Exception as exc:  # noqa: BLE001 - a render failure must not hide the raw data below
+        out(f"[human-view render failed: {type(exc).__name__}: {exc}]")
+        out(traceback.format_exc())
+
     tx = (ctx.get("transcription") or {}).get("channels") or {}
     cl = ctx.get("classify") or {}
     ag, cu = cl.get("agent_channel"), cl.get("customer_channel")
     checklist = ev.get("checklist") or []
-    out(f"\n=== SCORECARD ({sum(1 for r in checklist if r['status']=='met')}/{len(checklist)} met) ===")
-    for r in checklist:
-        out(f"  [{r['status']:13}] {r['tier']:4} {r['id']:22} {str(r.get('evidence'))[:90]}")
-    out(f"\nhard violations ({len(ev.get('violations') or [])}): "
-        + ", ".join(r['id'] for r in (ev.get('violations') or [])))
-    out(f"review_needed ({len(ev.get('review_needed') or [])}): "
-        + ", ".join(r['id'] for r in (ev.get('review_needed') or [])))
-    deal = {r['id']: r for r in checklist}.get("deal")
-    out(f"deal: {deal.get('evidence') if deal else None}")
-    out(f"intonation: {ev.get('intonation')}")
+
+    if verbose:  # raw per-criterion dump for calibration/debug (D2)
+        out(f"\n=== RAW CHECKLIST ({sum(1 for r in checklist if r['status']=='met')}/{len(checklist)} met) ===")
+        for r in checklist:
+            out(f"  [{r['status']:13}] {r['tier']:4} {r['id']:22} {str(r.get('evidence'))[:90]}")
+        out(f"hard violations ({len(ev.get('violations') or [])}): "
+            + ", ".join(r['id'] for r in (ev.get('violations') or [])))
+        out(f"review_needed ({len(ev.get('review_needed') or [])}): "
+            + ", ".join(r['id'] for r in (ev.get('review_needed') or [])))
+        out(f"intonation: {ev.get('intonation')}")
 
     at = (tx.get(ag, {}) or {}).get("text", "") or ""
     ct = (tx.get(cu, {}) or {}).get("text", "") or ""
@@ -108,10 +124,12 @@ def build_report(rec: str, sink) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) < 2:
-        print("usage: scorecard.py <recording> [out.txt]"); raise SystemExit(2)
-    rec = sys.argv[1]
-    out_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(rec).with_suffix(".scorecard.txt")
+    args = [a for a in sys.argv[1:] if a != "--verbose"]
+    verbose = "--verbose" in sys.argv[1:]
+    if not args:
+        print("usage: scorecard.py <recording> [out.txt] [--verbose]"); raise SystemExit(2)
+    rec = args[0]
+    out_path = Path(args[1]) if len(args) > 1 else Path(rec).with_suffix(".scorecard.txt")
     # Open the file up front and flush every line, so an uncatchable SIGKILL still leaves what was written.
     # If the output file itself cannot be opened (unwritable dir, etc.) there is nowhere to stream to — fail
     # LOUD and CLEAR on stderr with the exact reason and path, never a bare traceback the caller must decode.
@@ -126,7 +144,7 @@ def main() -> None:
             fh.flush()
             print(*a)  # echo to stdout too
         try:
-            build_report(rec, sink)
+            build_report(rec, sink, verbose=verbose)
         except Exception:  # noqa: BLE001 - even an unexpected failure must leave an inspectable file
             sink("UNEXPECTED SCRIPT FAILURE:")
             sink(traceback.format_exc())
