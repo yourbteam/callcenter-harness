@@ -117,5 +117,13 @@
       "advisories_word": "Препоръки",
       "coaching_title": "Какво се обърка"
     }
+  },
+  "_speaker_labels_note": "Role labels for the interleaved caller/client dialogue transcript (src/cc_harness/report/dialogue.py). Role-only (PII-free — never names). Locale-generic BG; keeps src/ hollow.",
+  "speaker_labels": {
+    "title": "ТРАНСКРИПЦИЯ (Оператор / Клиент)",
+    "agent": "Оператор",
+    "customer": "Клиент",
+    "unknown": "Говорител",
+    "mono_note": "моно запис — без разделяне на говорители"
   }
 }

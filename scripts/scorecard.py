@@ -117,10 +117,22 @@ def build_report(rec: str, sink, verbose: bool = False) -> None:
             + ", ".join(r['id'] for r in (ev.get('review_needed') or [])))
         out(f"intonation: {ev.get('intonation')}")
 
-    at = (tx.get(ag, {}) or {}).get("text", "") or ""
-    ct = (tx.get(cu, {}) or {}).get("text", "") or ""
-    out(f"\n=== AGENT TRANSCRIPT (redacted, {len(at)} chars) ===\n{at}")
-    out(f"\n=== CUSTOMER TRANSCRIPT (redacted, {len(ct)} chars) ===\n{ct}")
+    # Interleaved, role-labeled dialogue (default) — Caller vs Client from the per-channel timestamps.
+    from cc_harness.report import build_dialogue, render_dialogue
+    try:
+        from cc_harness.config.loader import load_language, load_profile
+        speaker_labels = load_language(load_profile("profiles/a1.json").language).speaker_labels
+    except Exception:  # noqa: BLE001 - fall back to ASCII role labels rather than hide the transcript
+        speaker_labels = {}
+    dlg = build_dialogue(tx, ag, cu, speaker_labels)
+    out(f"\n=== {speaker_labels.get('title') or 'DIALOGUE'} ===")
+    out(render_dialogue(dlg))
+
+    if verbose:  # raw per-channel blocks for calibration/debug
+        at = (tx.get(ag, {}) or {}).get("text", "") or ""
+        ct = (tx.get(cu, {}) or {}).get("text", "") or ""
+        out(f"\n=== AGENT TRANSCRIPT (raw, {len(at)} chars) ===\n{at}")
+        out(f"\n=== CUSTOMER TRANSCRIPT (raw, {len(ct)} chars) ===\n{ct}")
 
 
 def main() -> None:

@@ -66,6 +66,8 @@ class Lang:
     stt_prompt: str = ""
     # BG status words/icons + report chrome for the human-scorecard renderer. Optional (absent → ASCII fallback).
     status_labels: dict[str, Any] = field(default_factory=dict)
+    # BG role labels for the interleaved caller/client dialogue transcript (role-only, PII-free). Optional.
+    speaker_labels: dict[str, Any] = field(default_factory=dict)
 
 
 def _read_json(path: Path, what: str) -> dict[str, Any]:
@@ -161,4 +163,5 @@ def load_language(key: str, languages_dir: str = "languages", models_root: Path 
         iban_prefix=str(rec["iban_prefix"]),
         stt_prompt=_stt_prompt_str(data, f"language pack '{key}'"),
         status_labels=_opt_dict(data, "status_labels", f"language pack '{key}'"),
+        speaker_labels=_opt_dict(data, "speaker_labels", f"language pack '{key}'"),
     )
