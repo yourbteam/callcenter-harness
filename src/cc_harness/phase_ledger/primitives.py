@@ -18,7 +18,7 @@ from typing import Any, Callable
 from cc_harness.phase_ledger.evaluator import (
     _find_quote, _first_offset, check_forbidden, first_seconds_engagement,
 )
-from cc_harness.phase_ledger.textmatch import best_status, classify
+from cc_harness.phase_ledger.textmatch import best_status, classify, normalize
 
 Ctx = dict[str, Any]
 Result = dict[str, Any]
@@ -417,8 +417,25 @@ def conditional_on(cfg: dict[str, Any], ctx: Ctx) -> Result:
     return fn(inner, ctx) if fn else _r("indeterminate", reason="deferred")
 
 
+def phrase_count(cfg: dict[str, Any], ctx: Ctx) -> Result:
+    """met iff the configured phrases occur at least `min_count` times (total) in the agent transcript.
+
+    Deterministic count on the normalised text (STT-robust normalisation, exact-substring only). Used for
+    "did the agent REPEAT the offer" (offer_repeat) — restating the core offer pitch ≥ min_count times.
+    Not a fuzzy/near check: this is a frequency signal, so only exact normalised occurrences are counted.
+    """
+    phrases = [str(p) for p in cfg.get("phrases", [])]
+    min_count = int(cfg.get("min_count", 2))
+    nt = normalize(ctx["source_text"])
+    total = sum(nt.count(normalize(p)) for p in phrases if normalize(p))
+    if total >= min_count:
+        return _r("met", count=total, min_count=min_count)
+    return _r("not_met", count=total, min_count=min_count)
+
+
 PRIMITIVES: dict[str, Callable[[dict[str, Any], Ctx], Result]] = {
     "phrase_present": phrase_present,
+    "phrase_count": phrase_count,
     "phrase_ordering": phrase_ordering,
     "word_prefer": word_prefer,
     "word_avoid": word_avoid,

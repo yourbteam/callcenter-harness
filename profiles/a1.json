@@ -489,6 +489,20 @@
         "кой взема решение",
         "разговарям с титуляра"
       ]
+    },
+    {
+      "id": "offer_repeat",
+      "primitive": "phrase_count",
+      "tier": "soft",
+      "min_count": 2,
+      "_note": "Surfaces «не повтарят офертата» (FirstWorkflow.md:17): did the agent RESTATE the offer at least twice (a persistence signal — good agents re-pitch after a first 'no'). Deterministic count of offer-framing phrases; a rough proxy, CALIBRATION-PENDING — tune the phrases + min_count on labelled calls.",
+      "phrases": [
+        "оферта",
+        "предложение",
+        "предложа",
+        "по-добри условия",
+        "специална"
+      ]
     }
   ],
   "call_paths": [
@@ -588,6 +602,7 @@
       "active_listening": {"label": "Активно слушане", "section": "slushane"},
       "objection_effort": {"label": "Оборване на възражения / не се предаде", "section": "slushane"},
       "ask_for_decision": {"label": "Поиска решение от клиента", "section": "slushane"},
+      "offer_repeat": {"label": "Повтори/преповтори офертата", "section": "slushane"},
       "titular_check": {"label": "Провери кой взема решение (при друго лице)", "section": "nachalo"},
       "prefer_words": {"label": "Използва предпочитани изрази", "section": "ezik"},
       "avoid_words": {"label": "Избягва забранени думи", "section": "ezik"}

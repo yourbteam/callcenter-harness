@@ -18,6 +18,14 @@ def st(name, cfg, c): return run_primitive(name, cfg, c)["status"]
 ck("phrase_present met", st("phrase_present", {"phrases": ["от името", "А1"]}, ctx("обажда се от името на А1")) == "met")
 ck("phrase_present not_met", st("phrase_present", {"phrases": ["xyz"]}, ctx("нищо")) == "not_met")
 
+# phrase_count (offer_repeat): met iff total occurrences >= min_count
+_pc = {"primitive": "phrase_count", "phrases": ["оферта", "предложение"], "min_count": 2}
+ck("phrase_count met at >= min (2 hits)", st("phrase_count", _pc, ctx("специална оферта, ето предложение")) == "met")
+ck("phrase_count met when one phrase repeats", st("phrase_count", _pc, ctx("оферта днес, оферта утре")) == "met")
+ck("phrase_count not_met below min (1 hit)", st("phrase_count", _pc, ctx("само една оферта тук")) == "not_met")
+ck("phrase_count not_met at 0", st("phrase_count", _pc, ctx("нищо свързано")) == "not_met")
+ck("phrase_count carries the count", run_primitive("phrase_count", _pc, ctx("оферта, оферта, оферта"))["evidence"]["count"] == 3)
+
 # phrase_ordering
 ck("phrase_ordering met (before precedes after)",
    st("phrase_ordering", {"before_phrases": ["записва"], "after_phrases": ["оферта"]}, ctx("разговорът се записва, ето офертата")) == "met")
