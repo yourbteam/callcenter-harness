@@ -15,7 +15,7 @@ Stdlib only (urllib/json) so it runs under plain python3 — no venv, no pip dep
 
 Usage (wired via env):
   CC_HARNESS_AGENT_COMMAND="python3 /abs/path/scripts/judge_ollama.py --model qwen2.5:32b"
-Config env: JUDGE_MODEL, OLLAMA_HOST (default http://127.0.0.1:11434), JUDGE_NUM_CTX (default 8192),
+Config env: JUDGE_MODEL, OLLAMA_HOST (default http://127.0.0.1:11434), JUDGE_NUM_CTX (default 16384),
             JUDGE_TIMEOUT_SECONDS (default 170).
 """
 from __future__ import annotations
@@ -170,7 +170,10 @@ def main() -> None:
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
     host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
-    num_ctx = int(os.environ.get("JUDGE_NUM_CTX") or 8192)
+    # 16384 (not 8192): a full ~10-min call transcript + prosody is ~7-8k tokens, which trips the 90%
+    # fit-guard at num_ctx=8192 and fails the judge on long calls. qwen2.5:32b supports 32k context, so
+    # 16384 gives ample headroom while staying memory-reasonable. Override via JUDGE_NUM_CTX.
+    num_ctx = int(os.environ.get("JUDGE_NUM_CTX") or 16384)
     timeout = int(os.environ.get("JUDGE_TIMEOUT_SECONDS") or 170)
     if args.selftest:
         run_selftest(args.model, host, num_ctx, timeout)
