@@ -495,13 +495,15 @@
       "primitive": "phrase_count",
       "tier": "soft",
       "min_count": 2,
-      "_note": "Surfaces «не повтарят офертата» (FirstWorkflow.md:17): did the agent RESTATE the offer at least twice (a persistence signal — good agents re-pitch after a first 'no'). Deterministic count of offer-framing phrases; a rough proxy, CALIBRATION-PENDING — tune the phrases + min_count on labelled calls.",
+      "_note": "Surfaces «не повтарят офертата» (FirstWorkflow.md:17): did the agent RESTATE the offer at least twice (a persistence signal — good agents re-pitch after a first 'no'). Uses MULTI-WORD pitch-restatement phrases (each ~once per genuine re-pitch) rather than single generic words like «оферта» which hit many times in ONE pitch and made the signal near-always-met (review 2026-07-16). Still a proxy, CALIBRATION-PENDING — tune the phrases + min_count on labelled calls.",
       "phrases": [
-        "оферта",
-        "предложение",
-        "предложа",
+        "специална оферта",
         "по-добри условия",
-        "специална"
+        "нека ви обясня",
+        "запазите отстъпката",
+        "по-ниска цена",
+        "правим отстъпка",
+        "възползвате от"
       ]
     }
   ],
